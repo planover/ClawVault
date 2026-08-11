@@ -102,6 +102,8 @@ async function handleChatMessage(channel, msg, record) {
   let sub = '';
 
   if (msg.kind === 'voice') {
+    // 语音默认归入「语音」；若社交端已给转写且配置了 AI，则进一步做语义细分
+    category = '语音';
     // 1) 保存音频（若 provider 能提供 url / buffer）
     if (msg.media && (msg.media.url || msg.media.buffer)) {
       voiceRel = await storage.saveVoiceFile({ channelName: channel.name, media: msg.media });
@@ -110,15 +112,13 @@ async function handleChatMessage(channel, msg, record) {
     let transcript = text;
     if (!transcript && voiceRel) transcript = await transcribeVoice(voiceRel);
     text = transcript || '（语音，暂无可读转写）';
-    // 3) 分类：有转写文字则 AI 语义分类，否则归入「语音」
+    // 3) 分类：有转写文字则尝试 AI 语义细分（失败/未配置则保留「语音」）
     if (transcript) {
       const cat = await classifyText(text).catch(() => null);
       if (cat) {
         category = cat.category;
         sub = cat.sub;
       }
-    } else {
-      category = '语音';
     }
   } else {
     // 纯文本：AI 语义分类
@@ -191,20 +191,21 @@ server.listen(config.port, () => {
 // 演示模式：Mock 一个 bot 通道，定时注入样本消息，验证「接收→分类→落盘→UI」全链路
 function startDemoMode() {
   const demoChannel = { id: 'demo', name: '演示Bot' };
+  // 覆盖文本(进聊天.xlsx) / 语音(社交端已转写，进聊天.xlsx) / 图片(平台类型归类) 三类，演示全链路
   const samples = [
-    '帮我总结一下今天的项目进度，重点是后端接口联调和前端联调',
-    '推荐几部适合周末看的硬核科幻电影',
-    '记一下：下周三是妈妈生日，别忘了买礼物和订蛋糕',
-    '这段 Python 代码为什么报 null pointer？我看了半天没找到原因',
-    '明天 A 股大盘怎么看，有没有系统性风险',
-    '帮我写一段读取 CSV 并画折线图的 Python 脚本',
-    '把这次团建方案整理一下：周六上午爬山，下午剧本杀',
+    { kind: 'text', text: '帮我总结一下今天的项目进度，重点是后端接口联调和前端联调' },
+    { kind: 'text', text: '推荐几部适合周末看的硬核科幻电影' },
+    { kind: 'voice', text: '语音转写：提醒我明早九点跟客户开会，记得带合同' },
+    { kind: 'text', text: '记一下：下周三是妈妈生日，别忘了买礼物和订蛋糕' },
+    { kind: 'image', text: '这是今天评审用的架构设计图' },
+    { kind: 'text', text: '帮我写一段读取 CSV 并画折线图的 Python 脚本' },
+    { kind: 'text', text: '把这次团建方案整理一下：周六上午爬山，下午剧本杀' },
   ];
   let i = 0;
   const tick = () => {
-    const text = samples[i % samples.length];
+    const s = samples[i % samples.length];
     i += 1;
-    handleMessage(demoChannel, { peer: 'demo-user', text, contextToken: '', ts: Date.now() });
+    handleMessage(demoChannel, { peer: 'demo-user', text: s.text, kind: s.kind, contextToken: '', ts: Date.now() });
   };
   tick();
   setInterval(tick, 7000);
