@@ -1,0 +1,30 @@
+services:
+  fnclawvault:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fnclawvault:1.0.0
+    container_name: FnClawVault
+    restart: unless-stopped
+    ports:
+      - "${PORT:-6789}:6789"
+    environment:
+      - PORT=6789
+      - ARCHIVE_ROOT=${ARCHIVE_ROOT:-/archive}
+      - DATA_DIR=/data
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_BASE_URL=${AI_BASE_URL:-https://api.anthropic.com}
+      - AI_MODEL=${AI_MODEL:-claude-sonnet-4-5}
+      - DEMO_MODE=${DEMO_MODE:-false}
+    volumes:
+      - fnclawvault-data:/data
+      - ${ARCHIVE_HOST:-./archive}:/archive
+    networks:
+      - fnclawvault-net
+
+volumes:
+  fnclawvault-data:
+
+networks:
+  fnclawvault-net:
+    driver: bridge

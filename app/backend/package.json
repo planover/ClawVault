@@ -1,0 +1,19 @@
+{
+  "name": "fnclawvault-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "FnClawVault 飞牛爪匣后端：微信 ClawBot 多通道接入 + AI 自动分类归档",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  }
+}

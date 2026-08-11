@@ -1,0 +1,26 @@
+{
+  "port": 6789,
+  "archive_root": "/archive",
+  "data_dir": "/data",
+  "ai": {
+    "api_key": "",
+    "base_url": "https://api.anthropic.com",
+    "model": "claude-sonnet-4-5",
+    "enabled": true,
+    "stt_url": "",
+    "stt_model": "whisper-1"
+  },
+  "classification": {
+    "enabled": true,
+    "max_categories": 30,
+    "allow_new": true,
+    "use_platform_type": true,
+    "system_prompt": "你是一个微信对话归档分类器。用户会给你一段微信私聊消息（来自某个 bot），请判断它应该归入哪个分类。分类应简洁、通用，使用中文。可返回两级：主分类 category 与可选子分类 sub。只输出 JSON，不要解释。"
+  },
+  "ingest": {
+    "only_bot_contacts": true,
+    "whitelist": [],
+    "auto_reply_receipt": false
+  },
+  "demo_mode": false
+}

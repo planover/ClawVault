@@ -1,0 +1,164 @@
+// 微信 ClawBot（iLink 协议）适配器
+// 协议细节来自腾讯官方开放实现（openclaw-weixin / weixin-ClawBot-API）：
+// 接入域名 ilinkai.weixin.qq.com，需携带 ilink_bot_token 与 X-WECHAT-UIN。
+import QRCode from 'qrcode';
+import { getQRCode, getQRCodeStatus, getUpdates, sendMessage } from '../ilink/protocol.js';
+import { Provider } from './base.js';
+
+const SESSION_MS = 24 * 3600 * 1000;
+const RECONNECT_AT = SESSION_MS * 0.92; // 到期前 8% 自动生成新二维码
+
+// 从 iLink 原始消息推断平台消息类型（供"优先用平台类型归类、减少 AI"使用）
+function wechatKind(msg) {
+  const item = msg.item_list?.[0];
+  if (!item) return 'text';
+  if (item.image_item) return 'image';
+  if (item.voice_item) return 'voice';
+  if (item.video_item) return 'video';
+  if (item.file_item || item.file) return 'file';
+  if (item.emoji_item) return 'sticker';
+  if (item.location_item) return 'location';
+  if (item.text_item) return 'text';
+  return 'text';
+}
+
+export class WeChatIlinkProvider extends Provider {
+  constructor({ channel }) {
+    super({ channel });
+    this.token = null;
+    this.baseUrl = '';
+    this.loginTime = 0;
+    this._buf = '';
+    this._statusTimer = null;
+    this._running = false;
+  }
+
+  async startLogin() {
+    const data = await getQRCode();
+    this.channel.qrcode = data.qrcode;
+    this.channel.qrcodeImg = data.qrcode_img_content || '';
+    const payload =
+      this.channel.qrcodeImg && this.channel.qrcodeImg.startsWith('http')
+        ? this.channel.qrcodeImg
+        : this.channel.qrcode || '';
+    try {
+      this.channel.qrcodeDataUrl = await QRCode.toDataURL(payload);
+    } catch {
+      this.channel.qrcodeDataUrl = '';
+    }
+    this.token = null;
+    this.channel.loggedIn = false;
+    this.channel.needRescan = true;
+    this.channel._emitStatus();
+    this._pollStatus();
+    return {
+      qrcode: this.channel.qrcode,
+      qrcodeImg: this.channel.qrcodeImg,
+      qrcodeDataUrl: this.channel.qrcodeDataUrl,
+    };
+  }
+
+  _pollStatus() {
+    if (this._statusTimer) clearInterval(this._statusTimer);
+    this._statusTimer = setInterval(async () => {
+      try {
+        const st = await getQRCodeStatus(this.channel.qrcode);
+        if (st && st.status === 'confirmed') {
+          clearInterval(this._statusTimer);
+          this._statusTimer = null;
+          this.token = st.bot_token;
+          this.baseUrl = st.baseurl || '';
+          this.loginTime = Date.now();
+          this.channel.loggedIn = true;
+          this.channel.needRescan = false;
+          this.channel._emitStatus();
+          this.start();
+        }
+      } catch {
+        /* 网络抖动忽略，下一轮继续 */
+      }
+    }, 1500);
+  }
+
+  resume() {
+    if (this.token && this.channel.loggedIn && Date.now() - this.loginTime < SESSION_MS) {
+      this.start();
+      this.channel._emitStatus();
+    } else {
+      this.channel.loggedIn = false;
+      this.channel.needRescan = true;
+      this.startLogin().catch(() => {});
+    }
+  }
+
+  start() {
+    if (this._running) return;
+    this._running = true;
+    const loop = async () => {
+      while (this._running && this.token) {
+        if (Date.now() - this.loginTime > RECONNECT_AT && !this.channel.needRescan) {
+          this.channel.needRescan = true;
+          this.channel._emitStatus();
+          this.startLogin().catch(() => {});
+        }
+        try {
+          const res = await getUpdates(this.token, this.baseUrl, this._buf);
+          this._buf = res.get_updates_buf || this._buf;
+          for (const msg of res.msgs || []) {
+            if (msg.message_type !== 1) continue; // 仅处理私聊
+            const item = msg.item_list?.[0] || {};
+            const kind = wechatKind(msg);
+            // 社交端转写：微信语音在 voice_item 中带转写文字时使用
+            let text = item.text_item?.text || '';
+            if (kind === 'voice') {
+              text = item.voice_item?.voice_text || item.voice_item?.text || '';
+            }
+            // 纯文本无内容、语音又无转写时跳过（避免空行）
+            if (!text && kind !== 'voice') continue;
+            await this.channel.deliver({
+              peer: msg.from_user_id,
+              text,
+              contextToken: msg.context_token,
+              ts: Date.now(),
+              raw: msg,
+              kind,
+            });
+          }
+        } catch {
+          if (!this._running) break;
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
+    };
+    loop();
+  }
+
+  reLogin() {
+    this.stop();
+    this.startLogin().catch(() => {});
+  }
+
+  async send(peer, text, ctx = {}) {
+    if (!this.token) throw new Error('未登录');
+    return sendMessage(this.token, this.baseUrl, peer, ctx.contextToken || '', text);
+  }
+
+  stop() {
+    this._running = false;
+    if (this._statusTimer) {
+      clearInterval(this._statusTimer);
+      this._statusTimer = null;
+    }
+  }
+
+  toJSON() {
+    return { token: this.token, baseUrl: this.baseUrl, loginTime: this.loginTime, buf: this._buf };
+  }
+
+  applyState(state = {}) {
+    this.token = state.token || null;
+    this.baseUrl = state.baseUrl || '';
+    this.loginTime = state.loginTime || 0;
+    this._buf = state.buf || '';
+  }
+}
