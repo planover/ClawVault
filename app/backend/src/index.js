@@ -172,14 +172,14 @@ if (fs.existsSync(publicDir)) {
   app.get('*', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 } else {
   app.get('/', (req, res) =>
-    res.send('FnClawVault backend running. Build the frontend (npm run build in app/frontend) to enable the Web UI.'),
+    res.send('ClawVault backend running. Build the frontend (npm run build in app/frontend) to enable the Web UI.'),
   );
 }
 
 const server = http.createServer(app);
 ws.attach(server);
 server.listen(config.port, () => {
-  console.log(`FnClawVault 已启动: http://0.0.0.0:${config.port}  (归档根: ${config.archiveRoot})`);
+  console.log(`ClawVault 已启动: http://0.0.0.0:${config.port}  (归档根: ${config.archiveRoot})`);
   if (config.demoMode) console.log('[演示模式] 已启用，将定时注入样本消息用于验证');
 });
 

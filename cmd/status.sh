@@ -1,6 +1,6 @@
 #!/bin/sh
-# FnClawVault 状态脚本（fnOS 应用生命周期：status）
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx FnClawVault; then
+# ClawVault 状态脚本（fnOS 应用生命周期：status）
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ClawVault; then
   echo "running"
   exit 0
 else

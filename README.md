@@ -1,4 +1,4 @@
-# 飞牛爪匣 FnClawVault
+# ClawVault（爪匣）
 
 > 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等各平台与 **bot** 的对话，用 **AI 自动分类** 后归档到 **飞牛（fnOS）** 文件系统的不同文件夹，并在 Web 界面中浏览、检索与管理。
 
@@ -24,7 +24,7 @@
 ```
  微信 / Telegram / 飞书 / 钉钉 / 企微 / Discord / Slack / 任意HTTP
    (你 ↔ bot)  ──各平台协议──▶  ┌──────────────────────────┐
-                          │  FnClawVault             │
+                          │  ClawVault             │
                           │  接入层: 多 Provider 适配器 │
                           │   (wechat/telegram/webhook/…) │
                           │       │                   │
@@ -46,7 +46,7 @@
 ## 目录结构
 
 ```
-FnClawVault/
+ClawVault/
 ├── manifest              # fnOS 应用元数据（应用中心规范）
 ├── ICON.PNG / ICON_256.PNG
 ├── Dockerfile            # 多阶段构建（前端 + Node 后端）
@@ -69,13 +69,13 @@ FnClawVault/
 
 ```bash
 # 1. 构建并启动
-PORT=6789 ARCHIVE_ROOT=/vol1/@app/FnClawVault DEMO_MODE=false docker compose up -d --build
+PORT=6789 ARCHIVE_ROOT=/vol1/@app/ClawVault DEMO_MODE=false docker compose up -d --build
 
 # 2. 浏览器打开
 #    http://<飞牛IP>:6789
 ```
 
-归档目录默认挂载到 `./archive`（可改为飞牛共享目录，如 `/vol1/@app/FnClawVault`）。
+归档目录默认挂载到 `./archive`（可改为飞牛共享目录，如 `/vol1/@app/ClawVault`）。
 
 ### 方式二：fnOS 应用中心
 
@@ -118,7 +118,7 @@ cd app/frontend && npm install && npm run dev
 
 ### 分类优先级：优先用平台类型，减少 AI 调用
 
-> 社交软件/平台通常已经知道一条消息是「图片 / 语音 / 视频 / 文件 / 链接 …」，这种**类型信息不需要 AI 再来猜**。FnClawVault 默认先采用平台判定的消息类型直接归类，只为纯文本调用 AI 做语义分类——既更准，又省 token。
+> 社交软件/平台通常已经知道一条消息是「图片 / 语音 / 视频 / 文件 / 链接 …」，这种**类型信息不需要 AI 再来猜**。ClawVault 默认先采用平台判定的消息类型直接归类，只为纯文本调用 AI 做语义分类——既更准，又省 token。
 
 判定链路（见 `app/backend/src/classify.js` 的 `resolveClassification`）：
 

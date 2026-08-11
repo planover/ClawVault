@@ -1,7 +1,7 @@
-appname=fnclawvault
+appname=clawvault
 version=1.0.0
-display_name="飞牛爪匣 FnClawVault"
-desc="""<p><b>飞牛爪匣 FnClawVault</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
+display_name="ClawVault（爪匣）"
+desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
 <p><font color="green">1. 多 Bot 接入（可插拔 Provider）：</font><br/>内置微信 ClawBot、通用 Webhook、Telegram、钉钉/飞书/企微、Discord/Slack 五种接入；微信只是其中一种，新增平台只需实现一个适配器。</p>
 <p><font color="green">2. 多通道：</font><br/>每个 bot 是一个独立通道，互相隔离，可同时归档你与众多 bot 的对话。</p>
@@ -13,13 +13,13 @@ desc="""<p><b>飞牛爪匣 FnClawVault</b> —— 把你在微信 / Telegram / �
 arch=x86_64
 source=thirdparty
 maintainer=WorkBuddy
-maintainer_url=https://github.com/FnClawVault/FnClawVault
+maintainer_url=https://github.com/your-account/ClawVault
 distributor=WorkBuddy
-distributor_url=https://github.com/FnClawVault/FnClawVault
+distributor_url=https://github.com/your-account/ClawVault
 os_min_version=1.1.3100
 ctl_stop=true
 desktop_uidir=ui
-desktop_applaunchname="fnclawvault.Application"
+desktop_applaunchname="clawvault.Application"
 service_port=6789
 checkport=true
 disable_authorization_path=false

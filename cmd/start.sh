@@ -1,12 +1,12 @@
 #!/bin/sh
-# FnClawVault 启动脚本（fnOS 应用生命周期：start）
+# ClawVault 启动脚本（fnOS 应用生命周期：start）
 set -e
 
-APP="FnClawVault"
-IMAGE="fnclawvault:1.0.0"
+APP="ClawVault"
+IMAGE="clawvault:1.0.0"
 PORT="${PORT:-6789}"
-ARCHIVE="${ARCHIVE_ROOT:-/vol1/@app/FnClawVault}"
-DATA="${DATA_DIR:-/vol1/@app/FnClawVault/data}"
+ARCHIVE="${ARCHIVE_ROOT:-/vol1/@app/ClawVault}"
+DATA="${DATA_DIR:-/vol1/@app/ClawVault/data}"
 
 mkdir -p "$ARCHIVE" "$DATA"
 
@@ -32,4 +32,4 @@ docker run -d \
   -v "${ARCHIVE}:/archive" \
   "$IMAGE"
 
-echo "FnClawVault 已启动，访问 http://<飞牛IP>:${PORT}"
+echo "ClawVault 已启动，访问 http://<飞牛IP>:${PORT}"

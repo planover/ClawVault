@@ -1,9 +1,9 @@
 {
-  "name": "fnclawvault-backend",
+  "name": "clawvault-backend",
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "description": "FnClawVault 飞牛爪匣后端：微信 ClawBot 多通道接入 + AI 自动分类归档",
+  "description": "ClawVault ClawVault（爪匣）后端：微信 ClawBot 多通道接入 + AI 自动分类归档",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",

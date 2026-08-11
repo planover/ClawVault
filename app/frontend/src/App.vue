@@ -83,7 +83,7 @@ onMounted(() => {
 <template>
   <div class="app">
     <header class="top">
-      <div class="brand">🐾 飞牛爪匣 <span class="muted">FnClawVault</span></div>
+      <div class="brand">🐾 ClawVault <span class="muted">爪匣</span></div>
       <div class="spacer"></div>
       <button class="btn ghost" @click="showChannels = true">通道管理 ({{ channels.length }})</button>
       <button class="btn ghost" @click="showSettings = true">设置</button>

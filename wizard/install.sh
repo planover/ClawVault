@@ -1,15 +1,15 @@
 #!/bin/sh
-# FnClawVault 安装向导（fnOS 应用安装后初始化）
+# ClawVault 安装向导（fnOS 应用安装后初始化）
 set -e
 
-ARCHIVE="${ARCHIVE_ROOT:-/vol1/@app/FnClawVault}"
+ARCHIVE="${ARCHIVE_ROOT:-/vol1/@app/ClawVault}"
 mkdir -p "$ARCHIVE"
 
 cat <<'EOF'
 ============================================================
-  FnClawVault 飞牛爪匣 · 安装完成
+  ClawVault ClawVault（爪匣） · 安装完成
 ============================================================
-1. 在飞牛「应用中心」打开 FnClawVault，或访问：
+1. 在飞牛「应用中心」打开 ClawVault，或访问：
      http://<飞牛IP>:6789
 2. 进入「设置」页，填写 AI 分类接口（api_key / base_url / model）。
    若暂不填，分类将退化为按时间归档（仍可用）。
