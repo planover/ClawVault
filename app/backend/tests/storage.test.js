@@ -80,3 +80,42 @@ test('非 chat 类型 reclassify：仍落 Markdown 文件', ser, async () => {
   assert.ok(updated.path.endsWith('.md'));
   assert.notEqual(updated.path, md1, '应移动到新分类目录');
 });
+
+test('Markdown 落盘标题平台无关（ClawVault 对话归档，非写死微信）', ser, () => {
+  const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道D', peer: 'u5', text: '图示', kind: 'image', category: '图片' });
+  const md = fs.readFileSync(rec.path, 'utf8');
+  assert.match(md, /ClawVault 对话归档/);
+  assert.doesNotMatch(md, /微信对话归档/);
+});
+
+test('saveMessage 携带 voice 字段；setVoice 可回填', ser, () => {
+  const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道E', peer: 'u6', text: '语音', kind: 'voice', category: '语音', voice: '通道E/语音/x.mp3' });
+  assert.equal(rec.voice, '通道E/语音/x.mp3');
+  assert.equal(storage.getMessage(rec.id).voice, '通道E/语音/x.mp3');
+  storage.setVoice(rec.id, '通道E/语音/y.mp3');
+  assert.equal(storage.getMessage(rec.id).voice, '通道E/语音/y.mp3');
+});
+
+test('listChatArchives：能列出通道的 聊天.xlsx 与统计', ser, async () => {
+  // 先落一条聊天消息（写 DB），再追加到 聊天.xlsx，模拟真实归档链路
+  storage.saveMessage({ channelId: 'c1', channelName: '通道F', peer: 'u7', text: '行1', kind: 'text', category: '工作', voice: '通道F/语音/a.mp3' });
+  await storage.appendChatRow({ channelName: '通道F', row: { ts: Date.now(), channel: '通道F', peer: 'u7', category: '工作', sub: '', text: '行1', voice: '通道F/语音/a.mp3' } });
+  const list = storage.listChatArchives();
+  const f = list.find((x) => x.channel === '通道F');
+  assert.ok(f, '应列出通道F');
+  assert.ok(f.rows >= 1);
+  assert.equal(f.hasVoice, true);
+  assert.ok(f.downloadUrl.endsWith('/xlsx'));
+});
+
+test('appendChatRow 并发写入同一通道不丢行（串行队列）', ser, async () => {
+  const N = 8;
+  await Promise.all(
+    Array.from({ length: N }, (_, i) =>
+      storage.appendChatRow({ channelName: '通道Q', row: { ts: Date.now(), channel: '通道Q', peer: 'u', category: '测试', sub: '', text: `并发${i}`, voice: '' } }),
+    ),
+  );
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(storage._chatFile('通道Q'));
+  assert.equal(wb.worksheets[0].rowCount, 1 + N, '表头 + N 行应全部保留');
+});

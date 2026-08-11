@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "description": "ClawVault ClawVault（爪匣）后端：微信 ClawBot 多通道接入 + AI 自动分类归档",
+  "description": "ClawVault（爪匣）后端：多 Bot 接入 + AI 自动分类归档",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",

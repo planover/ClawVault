@@ -8,6 +8,7 @@ import SettingsDialog from './components/SettingsDialog.vue';
 
 const channels = ref([]);
 const folders = ref([]);
+const chats = ref([]);
 const messages = ref([]);
 const filter = ref({ channelName: '', category: '', sub: '' });
 const selectedId = ref(null);
@@ -24,6 +25,13 @@ function channelIdByName(name) {
 
 async function loadChannels() {
   channels.value = await api.listChannels();
+}
+async function loadChats() {
+  try {
+    chats.value = await api.chats();
+  } catch {
+    chats.value = [];
+  }
 }
 async function loadFolders() {
   folders.value = await api.folders();
@@ -62,6 +70,7 @@ function onWSEvent(e) {
   if (e.type === 'message' || e.type === 'reclassify') {
     loadMessages();
     loadFolders();
+    loadChats();
     if (e.type === 'reclassify' && selectedMessage.value && e.record.id === selectedMessage.value.id) {
       selectedMessage.value = e.record;
       newCat.value = e.record.category;
@@ -75,6 +84,7 @@ function onWSEvent(e) {
 onMounted(() => {
   loadChannels();
   loadFolders();
+  loadChats();
   loadMessages();
   connectWS(onWSEvent);
 });
@@ -91,6 +101,16 @@ onMounted(() => {
 
     <div class="body">
       <aside class="side">
+        <div class="side-sec">
+          <div class="side-title">聊天归档</div>
+          <div v-for="c in chats" :key="c.channel" class="chat-row">
+            <span class="chat-name">💬 {{ c.channel }}</span>
+            <a class="chat-dl" :href="c.downloadUrl" :download="`${c.channel}-聊天.xlsx`">⬇️ 聊天.xlsx</a>
+            <span v-if="c.hasVoice" title="含语音">🎧</span>
+            <span class="muted small">{{ c.rows }} 行</span>
+          </div>
+          <div v-if="!chats.length" class="muted small">暂无聊天归档</div>
+        </div>
         <FolderTree :folders="folders" :selected="filter" @select="onSelectFilter" />
       </aside>
 
@@ -104,6 +124,10 @@ onMounted(() => {
           <span class="muted">{{ selectedMessage.channelName }} · {{ new Date(selectedMessage.ts).toLocaleString('zh-CN') }}</span>
         </div>
         <div class="content">{{ selectedMessage.text }}</div>
+        <div v-if="selectedMessage.voice" class="voice">
+          <div class="muted small">语音</div>
+          <audio controls :src="api.voiceUrl(selectedMessage.id)"></audio>
+        </div>
         <div class="reclass">
           <h4>重新分类</h4>
           <div class="row">
@@ -193,5 +217,43 @@ onMounted(() => {
 }
 .muted {
   color: #8a9099;
+}
+.side-sec {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 10px 10px 12px;
+  margin-bottom: 6px;
+}
+.side-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+  margin-bottom: 6px;
+}
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.chat-name {
+  font-weight: 500;
+}
+.chat-dl {
+  color: #2563eb;
+  text-decoration: none;
+  font-size: 12px;
+}
+.chat-dl:hover {
+  text-decoration: underline;
+}
+.voice {
+  margin-top: 14px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 12px;
+}
+.voice audio {
+  width: 100%;
+  margin-top: 6px;
 }
 </style>

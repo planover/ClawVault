@@ -109,7 +109,7 @@ export async function testConnection({ apiKey, baseUrl, model }) {
       body: JSON.stringify({
         model,
         max_tokens: 300,
-        system: '你是一个微信对话归档分类器。用户会给你一段消息，请判断它应归入哪个分类。只输出 JSON，如 {"category":"工作","sub":"会议"}。',
+        system: '你是一个对话归档分类器。用户会给你一段消息，请判断它应归入哪个分类。只输出 JSON，如 {"category":"工作","sub":"会议"}。',
         messages: [{ role: 'user', content: sample }],
       }),
     });

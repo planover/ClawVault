@@ -13,6 +13,8 @@ import createChannelsRouter from './routes/channels.js';
 import createMessagesRouter from './routes/messages.js';
 import createFoldersRouter from './routes/folders.js';
 import createSettingsRouter from './routes/settings.js';
+import createChatsRouter from './routes/chats.js';
+import createVoiceRouter from './routes/voice.js';
 
 // ---- 设置持久化（覆盖默认配置） ----
 function loadSettings() {
@@ -128,11 +130,12 @@ async function handleChatMessage(channel, msg, record) {
   }
 
   const updated = storage.reclassify(record.id, category, sub);
+  if (voiceRel) storage.setVoice(record.id, voiceRel);
   await storage.appendChatRow({
     channelName: channel.name,
     row: { ts: updated?.ts || record.ts, channel: channel.name, peer: msg.peer, category, sub, text, voice: voiceRel },
   });
-  ws.broadcast({ type: 'reclassify', record: { ...(updated || record), category, sub } });
+  ws.broadcast({ type: 'reclassify', record: { ...(updated || record), category, sub, voice: voiceRel } });
 }
 
 function handleStatus() {
@@ -151,6 +154,8 @@ app.use('/api/channels', createChannelsRouter({ manager }));
 app.use('/api/messages', createMessagesRouter({ storage, ws }));
 app.use('/api/folders', createFoldersRouter({ storage }));
 app.use('/api/settings', createSettingsRouter({ config, storage, saveSettings }));
+app.use('/api/chats', createChatsRouter({ storage }));
+app.use('/api/voice', createVoiceRouter({ storage }));
 
 // 已注册的 bot 接入类型（前端"添加通道"表单据此渲染）
 app.get('/api/providers', (req, res) => res.json(listProviders()));

@@ -26,18 +26,23 @@ export class Storage {
         text TEXT,
         kind TEXT,
         path TEXT,
+        voice TEXT,
         created_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_msgs_channel ON messages(channel_id);
       CREATE INDEX IF NOT EXISTS idx_msgs_cat ON messages(category, sub);
       CREATE INDEX IF NOT EXISTS idx_msgs_ts ON messages(ts);
     `);
-    // 兼容旧库：补齐 kind 列
-    try {
-      this.db.exec('ALTER TABLE messages ADD COLUMN kind TEXT');
-    } catch {
-      /* 已存在 */
+    // 兼容旧库：补齐 kind / voice 列
+    for (const col of ['kind', 'voice']) {
+      try {
+        this.db.exec(`ALTER TABLE messages ADD COLUMN ${col} TEXT`);
+      } catch {
+        /* 已存在 */
+      }
     }
+    // 按通道串行化 聊天.xlsx 的追加写，避免同一通道并发读写导致丢行/损坏
+    this._chatQueue = new Map();
   }
 
   static isChat(kind) {
@@ -74,11 +79,12 @@ export class Storage {
   _md({ ts, channelName, peer, category, sub, text }) {
     const t = new Date(ts).toLocaleString('zh-CN');
     const cat = sub ? `${category} / ${sub}` : category;
-    return `# 微信对话归档\n\n- 时间：${t}\n- 通道：${channelName}\n- 对方：${peer || '我'}\n- 分类：${cat}\n\n---\n\n${text}\n`;
+    // 标题与文案平台无关（同一套引擎服务微信/Telegram/飞书/Discord…），不再写死"微信"
+    return `# ClawVault 对话归档\n\n- 时间：${t}\n- 通道：${channelName}\n- 对方：${peer || '我'}\n- 分类：${cat}\n\n---\n\n${text}\n`;
   }
 
   // 保存一条消息：写 SQLite；非聊天类(图片/文件…)同时落盘 Markdown，聊天类(纯文本/语音)不落 Markdown
-  saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '' }) {
+  saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '', voice = '' }) {
     const ts = Date.now();
     const chat = Storage.isChat(kind);
     let fpath = '';
@@ -103,14 +109,20 @@ export class Storage {
       text,
       kind,
       path: fpath,
+      voice: voice || '',
       created_at: ts,
     };
     const r = this.db
       .prepare(
-        'INSERT INTO messages (channel_id, channel_name, peer, ts, category, sub, text, kind, path, created_at) VALUES (@channel_id, @channel_name, @peer, @ts, @category, @sub, @text, @kind, @path, @created_at)',
+        'INSERT INTO messages (channel_id, channel_name, peer, ts, category, sub, text, kind, path, voice, created_at) VALUES (@channel_id, @channel_name, @peer, @ts, @category, @sub, @text, @kind, @path, @voice, @created_at)',
       )
       .run(info);
     return { id: Number(r.lastInsertRowid), ...info };
+  }
+
+  // 聊天类消息的语音音频相对路径（用于 Web 播放/下载），在音频落盘后回填
+  setVoice(id, rel) {
+    this.db.prepare('UPDATE messages SET voice=? WHERE id=?').run(rel || '', id);
   }
 
   // 重新分类：聊天类只更新 SQLite 索引（不移动 Markdown）；其他类搬 Markdown 文件
@@ -170,7 +182,20 @@ export class Storage {
   }
 
   // 向 [通道]/聊天.xlsx 追加一行（纯文本/语音聊天记录）
-  async appendChatRow({ channelName, row }) {
+  // 同一通道的多次追加串行执行，避免并发读写 xlsx 损坏或丢行
+  appendChatRow({ channelName, row }) {
+    const key = Storage.safe(channelName);
+    const prev = this._chatQueue.get(key) || Promise.resolve();
+    const run = () => this._appendChatRow(channelName, row);
+    const next = prev.then(run, run);
+    this._chatQueue.set(key, next);
+    next.finally(() => {
+      if (this._chatQueue.get(key) === next) this._chatQueue.delete(key);
+    });
+    return next;
+  }
+
+  async _appendChatRow(channelName, row) {
     const file = this._chatFile(channelName);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const wb = new ExcelJS.Workbook();
@@ -216,7 +241,44 @@ export class Storage {
       text: row.text,
       kind: row.kind,
       path: row.path,
+      voice: row.voice || '',
     };
+  }
+
+  // 聊天.xlsx 的绝对路径（按通道名）
+  chatFileFor(channelName) {
+    return this._chatFile(channelName);
+  }
+
+  // 列出各通道的聊天归档（用于 Web UI 下载入口）
+  listChatArchives() {
+    const root = this.archiveRoot;
+    if (!fs.existsSync(root)) return [];
+    const out = [];
+    for (const ch of fs.readdirSync(root)) {
+      const xlsx = path.join(root, ch, '聊天.xlsx');
+      if (!fs.existsSync(xlsx)) continue;
+      const r1 = this.db
+        .prepare("SELECT COUNT(*) AS c FROM messages WHERE channel_name=? AND kind IN ('text','voice')")
+        .get(ch);
+      const r2 = this.db
+        .prepare("SELECT COUNT(*) AS c FROM messages WHERE channel_name=? AND voice IS NOT NULL AND voice != ''")
+        .get(ch);
+      let size = 0;
+      try {
+        size = fs.statSync(xlsx).size;
+      } catch {
+        /* ignore */
+      }
+      out.push({
+        channel: ch,
+        rows: r1?.c || 0,
+        hasVoice: (r2?.c || 0) > 0,
+        size,
+        downloadUrl: `/api/chats/${encodeURIComponent(ch)}/xlsx`,
+      });
+    }
+    return out;
   }
 
   // 列表查询（支持通道/分类/子分类/搜索过滤 + 分页）

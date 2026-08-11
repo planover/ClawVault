@@ -18,7 +18,7 @@ const DEFAULTS = {
     allow_new: true,
     usePlatformType: true,
     system_prompt:
-      '你是一个微信对话归档分类器。用户会给你一段微信私聊消息（来自某个 bot），' +
+      '你是一个对话归档分类器。用户会给你一段与某个 bot 的对话消息，' +
       '请判断它应该归入哪个分类。分类应简洁、通用，使用中文，2-6 个字为宜。' +
       '可返回两级：主分类 category 与可选子分类 sub。只输出 JSON，不要任何解释。' +
       '示例：{"category":"工作","sub":"项目A"} 或 {"category":"灵感"}',
