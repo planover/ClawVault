@@ -1,0 +1,98 @@
+<svg viewBox="0 0 680 600" width="100%" role="img">
+  <title>ClawVault 架构图</title>
+  <desc>外部平台经可插拔 Provider 接入层进入 ChannelManager，经 index.js 处理链（白名单→入库→广播）分流到 classify 与 storage，最终通过 WebSocket 推送到 Vue Web UI；channels.json 经 vault 加密落盘。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <style>
+    .t { font-family: var(--font-sans); font-size: 14px; fill: var(--color-text-primary); }
+    .th { font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: var(--color-text-primary); }
+    .ts { font-family: var(--font-sans); font-size: 12px; fill: var(--color-text-secondary); }
+    .arr { stroke: var(--color-border-primary); stroke-width: 1.5; fill: none; }
+    .leader { stroke: var(--color-border-tertiary); stroke-width: 0.5; stroke-dasharray: 3 3; fill: none; }
+    .box { fill: var(--color-background-secondary); stroke: var(--color-border-tertiary); stroke-width: 0.5; }
+  </style>
+
+  <text class="th" x="40" y="34">ClawVault（爪匣）架构</text>
+
+  <!-- r0 外部平台 -->
+  <g class="node c-purple">
+    <rect x="190" y="56" width="300" height="56" rx="10" stroke-width="0.5"/>
+    <text class="th" x="340" y="76" text-anchor="middle" dominant-baseline="central">外部平台</text>
+    <text class="ts" x="340" y="94" text-anchor="middle" dominant-baseline="central">微信·Telegram·飞书·钉钉·Discord·Slack·Webhook·FileDrop</text>
+  </g>
+
+  <!-- r1 Provider 适配层 -->
+  <g class="node c-teal">
+    <rect x="190" y="128" width="300" height="56" rx="10" stroke-width="0.5"/>
+    <text class="th" x="340" y="148" text-anchor="middle" dominant-baseline="central">Provider 适配层</text>
+    <text class="ts" x="340" y="166" text-anchor="middle" dominant-baseline="central">可插拔：每种 bot 一个 Provider 子类</text>
+  </g>
+
+  <!-- r2 ChannelManager -->
+  <g class="node c-teal">
+    <rect x="190" y="200" width="300" height="56" rx="10" stroke-width="0.5"/>
+    <text class="th" x="340" y="220" text-anchor="middle" dominant-baseline="central">ChannelManager</text>
+    <text class="ts" x="340" y="238" text-anchor="middle" dominant-baseline="central">多通道 · channels.json 加密存储</text>
+  </g>
+
+  <!-- r3 index 处理链 -->
+  <g class="node c-teal">
+    <rect x="190" y="272" width="300" height="56" rx="10" stroke-width="0.5"/>
+    <text class="th" x="340" y="292" text-anchor="middle" dominant-baseline="central">index.js 处理链</text>
+    <text class="ts" x="340" y="310" text-anchor="middle" dominant-baseline="central">白名单 → 入库 → 实时广播</text>
+  </g>
+
+  <!-- r4 classify + storage -->
+  <g class="node c-teal">
+    <rect x="70" y="344" width="260" height="56" rx="10" stroke-width="0.5"/>
+    <text class="th" x="200" y="364" text-anchor="middle" dominant-baseline="central">classify.js</text>
+    <text class="ts" x="200" y="382" text-anchor="middle" dominant-baseline="central">平台类型优先 / AI 语义</text>
+  </g>
+  <g class="node c-teal">
+    <rect x="350" y="344" width="260" height="56" rx="10" stroke-width="0.5"/>
+    <text class="th" x="480" y="364" text-anchor="middle" dominant-baseline="central">storage.js</text>
+    <text class="ts" x="480" y="382" text-anchor="middle" dominant-baseline="central">SQLite + 文件系统 + 聊天.xlsx</text>
+  </g>
+
+  <!-- r5 WebSocket -->
+  <g class="node c-teal">
+    <rect x="190" y="448" width="300" height="56" rx="10" stroke-width="0.5"/>
+    <text class="th" x="340" y="468" text-anchor="middle" dominant-baseline="central">WebSocket 广播</text>
+    <text class="ts" x="340" y="486" text-anchor="middle" dominant-baseline="central">message / reclassify / channels</text>
+  </g>
+
+  <!-- r6 Web UI -->
+  <g class="node c-purple">
+    <rect x="190" y="520" width="300" height="56" rx="10" stroke-width="0.5"/>
+    <text class="th" x="340" y="540" text-anchor="middle" dominant-baseline="central">Web UI (Vue 3)</text>
+    <text class="ts" x="340" y="558" text-anchor="middle" dominant-baseline="central">分类树 / 消息流 / 详情</text>
+  </g>
+
+  <!-- 主链路箭头 -->
+  <path class="arr" d="M340 112 L340 128" marker-end="url(#arrow)"/>
+  <path class="arr" d="M340 184 L340 200" marker-end="url(#arrow)"/>
+  <path class="arr" d="M340 256 L340 272" marker-end="url(#arrow)"/>
+  <path class="arr" d="M340 328 L200 344" marker-end="url(#arrow)"/>
+  <path class="arr" d="M340 328 L480 344" marker-end="url(#arrow)"/>
+  <path class="arr" d="M200 400 L340 448" marker-end="url(#arrow)"/>
+  <path class="arr" d="M480 400 L340 448" marker-end="url(#arrow)"/>
+  <path class="arr" d="M340 504 L340 520" marker-end="url(#arrow)"/>
+
+  <!-- 侧栏：配置源 + vault 加密 -->
+  <g>
+    <rect class="box" x="508" y="120" width="124" height="56" rx="8"/>
+    <text class="ts" x="570" y="142" text-anchor="middle" dominant-baseline="central">配置源</text>
+    <text class="ts" x="570" y="160" text-anchor="middle" dominant-baseline="central">env / settings</text>
+    <path class="leader" d="M490 148 L508 148"/>
+  </g>
+  <g>
+    <rect class="box" x="508" y="200" width="124" height="56" rx="8"/>
+    <text class="ts" x="570" y="222" text-anchor="middle" dominant-baseline="central">vault 加密</text>
+    <text class="ts" x="570" y="240" text-anchor="middle" dominant-baseline="central">AES-256-GCM</text>
+    <path class="leader" d="M490 228 L508 228"/>
+  </g>
+</svg>

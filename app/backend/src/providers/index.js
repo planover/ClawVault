@@ -4,6 +4,7 @@ import { WebhookProvider } from './webhook.js';
 import { TelegramProvider } from './telegram.js';
 import { OfficeProvider } from './office.js';
 import { DiscordSlackProvider } from './discord_slack.js';
+import { FileDropProvider } from './filedrop.js';
 
 // 每种 Provider 的元数据用于前端渲染"添加通道"表单
 export const PROVIDERS = {
@@ -58,6 +59,20 @@ export const PROVIDERS = {
       { key: 'outgoing_url', label: 'Incoming Webhook 地址', type: 'text', placeholder: 'https://hooks.slack.com/... 或 https://discord.com/api/webhooks/...', required: true },
     ],
   },
+  filedrop: {
+    id: 'filedrop',
+    name: '本地文件投递（File Drop）',
+    desc: '监控本地目录，把 .txt/.md 等文本文件作为消息归档（零依赖，适合本地 bot/脚本）',
+    icon: '📁',
+    auth: 'none',
+    configFields: [
+      { key: 'path', label: '监控目录', type: 'text', placeholder: '/vol1/@app/ClawVault/drop', required: true },
+      { key: 'pattern', label: '文件后缀（逗号分隔，默认 .txt/.md）', type: 'text', required: false },
+      { key: 'recursive', label: '递归子目录', type: 'select', options: ['true', 'false'], required: false },
+      { key: 'delete_after', label: '投递后删除源文件', type: 'select', options: ['true', 'false'], required: false },
+      { key: 'encoding', label: '文件编码', type: 'text', placeholder: 'utf-8', required: false },
+    ],
+  },
 };
 
 export function getProviderClass(type) {
@@ -72,6 +87,8 @@ export function getProviderClass(type) {
       return OfficeProvider;
     case 'discord_slack':
       return DiscordSlackProvider;
+    case 'filedrop':
+      return FileDropProvider;
     default:
       return WebhookProvider; // 未知类型兜底为通用 Webhook
   }

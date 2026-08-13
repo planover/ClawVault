@@ -209,6 +209,7 @@ cd app/frontend && npm install && npm run dev
 | ✈️ Telegram | Token | `bot_token` | 填 BotFather Token，自动长轮询收消息 |
 | 🏢 钉钉/飞书/企微 | Webhook | 平台 + 群机器人地址 + 密钥(可选) | 把平台「群机器人 Webhook」地址填到出站；入站用平台事件回调指向 `/api/inbound/<通道ID>` |
 | 🤖 Discord/Slack | Webhook | 平台 + Incoming Webhook 地址 | 同 Webhook 思路；Slack 订阅验证会自动回显 `challenge` |
+| 📁 本地文件投递 | 目录监控 | 监控目录（可选后缀/递归） | 零依赖；把 `.txt/.md` 等文本文件作为消息归档，适合本地 bot / 脚本把输出落盘即归档 |
 
 **通用 Webhook 入站示例**（任意脚本/平台都能用，覆盖"其他 bot"）：
 
@@ -286,6 +287,13 @@ WebSocket：`/ws` 推送 `{type:"message"|"reclassify"|"channels", ...}` 事件�
 - 使用微信 ClawBot 需遵守《微信 ClawBot 功能使用条款》，仅用于合规的个人归档场景。
 - 数据完全留在你自己的飞牛，后端不向任何第三方上报内容（AI 分类调用的是你自行配置的接口）。
 - 本项目为第三方社区应用，与微信官方无隶属关系。
+
+## 凭据安全
+
+- 通道配置（含各平台 Token / Secret）持久化在 `DATA_DIR/channels.json`，**落盘前以 AES-256-GCM 加密**，不会以明文存储。
+- 密钥优先级：环境变量 `CLV_MASTER_KEY`（推荐容器 / 生产，随 Secret 注入）> `DATA_DIR/.clvkey`（首次运行自动生成，权限 `600`）。
+- 前端「通道管理」列表接口对 `password` 类型字段做脱敏展示（`••••••••`），磁盘与接口两层防护。
+- 注意：`/api/inbound` 与 Web UI 默认无访问控制，建议仅在内网（飞牛）环境使用，对外暴露需自行加反向代理鉴权。
 
 ---
 

@@ -54,7 +54,7 @@ test('appendChatRow：纯文本与语音都能写入 聊天.xlsx', ser, async ()
 test('saveVoiceFile：buffer 写入音频并返回相对路径', ser, async () => {
   const rel = await storage.saveVoiceFile({ channelName: '通道A', media: { buffer: Buffer.from('FAKEMP3'), ext: 'mp3' } });
   assert.ok(rel, '应返回相对路径');
-  assert.match(rel, /语音\/.*\.mp3$/);
+  assert.match(rel, /语音[\\/].*\.mp3$/);
   const abs = path.join(archiveRoot, rel);
   assert.ok(fs.existsSync(abs), '音频文件应已落盘');
   assert.equal(fs.readFileSync(abs, 'utf8'), 'FAKEMP3');

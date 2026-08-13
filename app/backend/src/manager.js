@@ -2,6 +2,7 @@
 // 不再绑定微信，通道类型由 providerType 决定（见 src/providers）。
 import fs from 'node:fs';
 import path from 'node:path';
+import * as vault from './vault.js';
 import { Channel } from './channel.js';
 import { PROVIDERS } from './providers/index.js';
 
@@ -11,6 +12,7 @@ export class ChannelManager {
     this.onMessage = onMessage;
     this.onStatus = onStatus;
     this.storePath = path.join(dataDir, 'channels.json');
+    this._key = vault.loadKey(dataDir); // 主密钥：CLV_MASTER_KEY > data_dir/.clvkey
     this.channels = new Map();
     this._load();
   }
@@ -18,9 +20,22 @@ export class ChannelManager {
   _load() {
     let list = [];
     try {
-      list = JSON.parse(fs.readFileSync(this.storePath, 'utf8'));
-    } catch {
-      list = [];
+      const raw = fs.readFileSync(this.storePath, 'utf8');
+      let parsed = null;
+      try {
+        parsed = JSON.parse(raw); // 旧明文：兼容迁移
+      } catch {
+        parsed = null;
+      }
+      if (parsed) {
+        list = parsed;
+        this._persist(); // 首次读取为明文 → 立即重写为加密态
+      } else {
+        list = vault.decryptJSON(raw, this._key); // 加密态
+      }
+    } catch (e) {
+      if (e && e.code === 'ENOENT') list = [];
+      else throw e; // 加密文件损坏 / 密钥错误 → 显式报错
     }
     for (const s of list) {
       const ch = new Channel({
@@ -39,7 +54,8 @@ export class ChannelManager {
 
   _persist() {
     const list = [...this.channels.values()].map((ch) => ch.toJSON());
-    fs.writeFileSync(this.storePath, JSON.stringify(list, null, 2));
+    fs.mkdirSync(this.dataDir, { recursive: true });
+    fs.writeFileSync(this.storePath, vault.encryptJSON(list, this._key), { mode: 0o600 });
   }
 
   // 供 Channel.save() 调用
