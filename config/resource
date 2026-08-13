@@ -1,0 +1,5 @@
+{
+  "data-share": [
+    { "name": "归档目录", "path": "archive", "mode": "rw", "desc": "ClawVault 消息归档根目录（Markdown / SQLite / 语音 / 聊天.xlsx）" }
+  ]
+}

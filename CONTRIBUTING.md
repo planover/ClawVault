@@ -59,13 +59,21 @@ node --test tests/*.test.js
 
 ## 打包 fpk（飞牛 fnOS 安装包）
 
-fpk 本质是应用的 gzip tarball，文件名形如 `clawvault_<版本>_x86_64.fpk`。本地打包：
+`fpk` 是 **双层 gzip tar**：外层根 7 项（`manifest` / `cmd/` / `wizard/` / `config/` / `ICON.PNG` / `ICON_256.PNG` / `app.tgz`）+ 内层 `app.tgz`（打包整个 `app/` 目录）。项目布局遵循 fnpack：`desktop_uidir=ui` 对应 `app/ui/`，桌面 UI 与后端/前端一起进 `app.tgz`。
+
+本地打包（无需 `fnpack`）：
 
 ```bash
 cd ClawVault
-tar -czf clawvault_$(grep '^version=' manifest | cut -d= -f2)_x86_64.fpk \
-  --exclude='.git' --exclude='node_modules' --exclude='*/node_modules' \
-  --exclude='archive' --exclude='data' -C . .
+VER=$(grep '^version=' manifest | cut -d= -f2)
+
+# 1) 内层：把 app/ 打成 app.tgz（顶层为 app/）
+tar -czf app.tgz app
+
+# 2) 外层：固定 7+ 顶层条目（app/ 不直接出现在外层）
+tar -czf "dist-fpk/clawvault_${VER}_x86_64.fpk" \
+  manifest cmd wizard config ICON.PNG ICON_256.PNG app.tgz \
+  Dockerfile docker-compose.yml LICENSE README.md CONTRIBUTING.md
 ```
 
 发布请走 GitHub Release（附带 fpk 资源），版本号与 `manifest` 中 `version` 保持一致。

@@ -1,5 +1,5 @@
 appname=clawvault
-version=1.0.1
+version=1.0.2
 display_name="ClawVault（爪匣）"
 desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
@@ -23,5 +23,6 @@ desktop_applaunchname="clawvault.Application"
 service_port=6789
 checkport=true
 disable_authorization_path=false
-changelog="""1.0.1：新增本地文件投递 Provider（FileDrop）、channels.json 改用 AES-256-GCM 加密凭据、补充单元测试与架构图；fpk 改为镜像缺失时本地 docker build 自包含安装。
+changelog="""1.0.2：修正 fpk 项目布局（ui/ → app/ui/、补 config/resource、补 cmd 生命周期 stub），改为 fnpack 双层 tar.gz 格式。
+1.0.1：新增本地文件投递 Provider（FileDrop）、channels.json 改用 AES-256-GCM 加密凭据、补充单元测试与架构图；fpk 改为镜像缺失时本地 docker build 自包含安装。
 1.0.0 首发：多 Bot 可插拔 Provider 接入（微信 ClawBot / 通用 Webhook / Telegram / 钉钉飞书企微 / Discord Slack）、AI 自动分类、飞牛文件系统归档、Web 管理与检索、演示模式。"""

@@ -1,0 +1,3 @@
+#!/bin/sh
+# ClawVault fnOS 生命周期钩子: upgrade_callback（当前未使用，保留为 no-op 兼容 fnpack 标准接口）
+exit 0

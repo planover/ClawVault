@@ -13,3 +13,7 @@ data/
 
 # 系统文件
 .DS_Store
+
+# 构建产物（fpk 内层 app.tgz 与发布包目录）
+app.tgz
+dist-fpk/
