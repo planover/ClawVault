@@ -7,13 +7,18 @@ IMAGE="clawvault:1.0.0"
 PORT="${PORT:-6789}"
 ARCHIVE="${ARCHIVE_ROOT:-/vol1/@app/ClawVault}"
 DATA="${DATA_DIR:-/vol1/@app/ClawVault/data}"
+# 应用根目录（fpk 解压后的目录，含 Dockerfile）
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 mkdir -p "$ARCHIVE" "$DATA"
 
-# 若本地无镜像则尝试从仓库拉取（社区发布时替换为你的镜像地址）
+# 镜像缺失时：优先从仓库拉取，失败则本地构建（fpk 已自带 Dockerfile 与源码，自包含）
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "本地未找到镜像 $IMAGE，尝试拉取..."
-  docker pull "$IMAGE" || echo "拉取失败，请先构建镜像（见 README）。"
+  if ! docker pull "$IMAGE" 2>/dev/null; then
+    echo "拉取失败，改用本地构建（首次较慢，需联网拉取基础镜像与 npm 依赖）..."
+    docker build -t "$IMAGE" "$APP_DIR"
+  fi
 fi
 
 docker rm -f "$APP" 2>/dev/null || true

@@ -1,0 +1,23 @@
+#!/bin/sh
+# ClawVault fnOS 生命周期统一入口（cmd/main）
+# fnOS 调用约定：cmd/main {start|stop|status}
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ACTION="$1"
+
+case "$ACTION" in
+  start)
+    sh "$SCRIPT_DIR/start.sh"
+    ;;
+  stop)
+    sh "$SCRIPT_DIR/stop.sh"
+    ;;
+  status)
+    sh "$SCRIPT_DIR/status.sh"
+    ;;
+  *)
+    echo "用法: main {start|stop|status}" >&2
+    exit 1
+    ;;
+esac

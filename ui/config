@@ -1,0 +1,13 @@
+{
+  ".url": {
+    "clawvault.Application": {
+      "title": "ClawVault（爪匣）",
+      "icon": "images/icon-{0}.png",
+      "type": "url",
+      "protocol": "http",
+      "port": "6789",
+      "url": "/",
+      "allUsers": true
+    }
+  }
+}
