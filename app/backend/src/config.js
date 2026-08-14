@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-
 const DEFAULTS = {
   port: 6789,
   archive_root: '/archive',
@@ -54,7 +52,8 @@ export const config = {
   demoMode: env('DEMO_MODE', String(DEFAULTS.demo_mode)) === 'true',
 };
 
-fs.mkdirSync(config.dataDir, { recursive: true });
-fs.mkdirSync(config.archiveRoot, { recursive: true });
-
+// 注意：dataDir / archiveRoot 的物理创建不在此处进行（避免导入时的副作用，
+// 同时避免在无写权限环境如 CI runner 上抛 EACCES）。它们由各自的消费者
+// 负责创建：Storage 构造时会 mkdir dataDir + archiveRoot（src/storage.js），
+// ChannelManager 构造时会 mkdir dataDir（src/manager.js）。
 export default config;
