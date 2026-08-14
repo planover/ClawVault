@@ -3,12 +3,14 @@
 set -e
 
 APP="ClawVault"
-IMAGE="clawvault:1.0.0"
 PORT="${PORT:-6789}"
 ARCHIVE="${ARCHIVE_ROOT:-/vol1/@app/ClawVault}"
 DATA="${DATA_DIR:-/vol1/@app/ClawVault/data}"
 # 应用根目录（fpk 解压后的目录，含 Dockerfile）
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# 镜像 tag 与 manifest 版本保持一致（fpk 自包含，优先本地构建）
+VER="$(grep '^version=' "$APP_DIR/manifest" 2>/dev/null | head -1 | cut -d= -f2)"
+IMAGE="clawvault:${VER:-1.0.2}"
 
 mkdir -p "$ARCHIVE" "$DATA"
 
