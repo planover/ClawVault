@@ -59,21 +59,17 @@ node --test tests/*.test.js
 
 ## 打包 fpk（飞牛 fnOS 安装包）
 
-`fpk` 是 **双层 gzip tar**：外层根 7 项（`manifest` / `cmd/` / `wizard/` / `config/` / `ICON.PNG` / `ICON_256.PNG` / `app.tgz`）+ 内层 `app.tgz`（打包整个 `app/` 目录）。项目布局遵循 fnpack：`desktop_uidir=ui` 对应 `app/ui/`，桌面 UI 与后端/前端一起进 `app.tgz`。
+`fpk` 是 **双层 gzip tar**（fnpack 规范）：
 
-本地打包（无需 `fnpack`）：
+- **外层**顶层固定条目：`manifest` / `cmd/` / `wizard/` / `config/` / `ICON.PNG` / `ICON_256.PNG` / `app.tgz` + `Dockerfile` / `docker-compose.yml` / `LICENSE` / `README.md` / `CONTRIBUTING.md`
+- **内层 `app.tgz`** 顶层为 `backend` / `frontend` / `ui`（**不含 `app/` 包装层**——fnOS 安装时会把 `app.tgz` 解到 `install/app/`，多包一层会变成 `install/app/app/` 导致 Dockerfile 的 `COPY app/backend/` 失败）。
+- `desktop_uidir=ui` 对应 `app/ui/`；`cmd/` 下脚本需 755 执行位（Windows 不保留 Unix 权限，脚本会自动 `chmod +x`）。
+
+本地打包（无需 `fnpack`，已固化为脚本）：
 
 ```bash
-cd ClawVault
-VER=$(grep '^version=' manifest | cut -d= -f2)
-
-# 1) 内层：把 app/ 打成 app.tgz（顶层为 app/）
-tar -czf app.tgz app
-
-# 2) 外层：固定 7+ 顶层条目（app/ 不直接出现在外层）
-tar -czf "dist-fpk/clawvault_${VER}_x86_64.fpk" \
-  manifest cmd wizard config ICON.PNG ICON_256.PNG app.tgz \
-  Dockerfile docker-compose.yml LICENSE README.md CONTRIBUTING.md
+bash scripts/build-fpk.sh            # 构建 fpk 到 dist-fpk/
+bash scripts/build-fpk.sh --check    # 构建并模拟 fnOS 安装校验布局
 ```
 
 发布请走 GitHub Release（附带 fpk 资源），版本号与 `manifest` 中 `version` 保持一致。
