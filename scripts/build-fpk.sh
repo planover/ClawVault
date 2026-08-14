@@ -64,7 +64,7 @@ if [ "${1:-}" = "--check" ]; then
   tar -xzf "$SIM/app.tgz" -C "$SIM/app"
   ok=1
   for p in \
-    manifest cmd/main config/privilege config/resource wizard/install.sh \
+    manifest cmd/main config/privilege config/resource wizard/install \
     app/backend/src/index.js app/frontend/src/App.vue app/ui/config \
     app/docker/docker-compose.yaml app/docker/Dockerfile; do
     if [ ! -e "$SIM/$p" ]; then echo "    ✗ 缺失 $p"; ok=0; fi

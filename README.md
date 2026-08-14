@@ -79,7 +79,7 @@ PORT=6789 ARCHIVE_ROOT=/vol1/@app/ClawVault DEMO_MODE=false docker compose up -d
 
 ### 方式二：fnOS 应用中心
 
-本仓库符合飞牛第三方应用规范（`manifest` + `cmd/` + 图标）。将仓库打包为 fpk 或导入为本地第三方应用即可在应用中心一键安装；`cmd/start.sh` 负责拉起容器，`wizard/install.sh` 完成初始化。
+本仓库符合飞牛第三方应用规范（`manifest` + `cmd/` + 图标 + `wizard/install` 安装向导）。将仓库打包为 fpk 或导入为本地第三方应用即可在应用中心一键安装；`cmd/main` 负责通过 Docker 拉起容器，`wizard/install` 为安装向导（含中文《许可协议》勾选步骤）。
 
 ### 方式三：本地开发
 
