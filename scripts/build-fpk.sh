@@ -3,7 +3,9 @@
 #
 # fpk 结构（fnpack 规范）：
 #   外层：manifest / cmd / wizard / config / ICON.PNG / ICON_256.PNG / app.tgz
-#         + LICENSE / README.md / CONTRIBUTING.md
+#         + README.md / CONTRIBUTING.md
+#         （注意：LICENSE 不再放外层，避免 fnOS 自动渲染出独立的英文「协议许可」步骤；
+#          把它放进 app/backend/LICENSE，随 app.tgz 进入容器，保证合规交付。）
 #   内层 app.tgz 顶层：backend / frontend / ui / docker（不含 app/ 包装层，
 #                    fnOS 安装时会把 app.tgz 解到 install/app/，再包一层会错位）
 #   fnOS 标准 Docker 应用布局：docker-compose 与 Dockerfile 都在 app/docker/ 下
@@ -47,11 +49,11 @@ tar -czf app.tgz -C app \
 echo "    ✓ app.tgz 完成 ($(stat -c%s app.tgz) bytes)"
 
 # 3) 外层 fpk：固定顶层条目（app/ 仅通过 app.tgz 间接存在；Dockerfile 与
-#    docker-compose.yaml 已迁入 app/docker/，从外层移除）
+#    docker-compose.yaml 已迁入 app/docker/，从外层移除；LICENSE 已挪进 app/backend/）
 rm -f "$FPK" 2>/dev/null || true
 tar -czf "$FPK" \
   manifest cmd wizard config ICON.PNG ICON_256.PNG app.tgz \
-  LICENSE README.md CONTRIBUTING.md
+  README.md CONTRIBUTING.md
 echo "    ✓ fpk: $FPK ($(stat -c%s "$FPK") bytes)"
 
 # 4) 可选：模拟 fnOS 安装校验布局
@@ -65,10 +67,12 @@ if [ "${1:-}" = "--check" ]; then
   ok=1
   for p in \
     manifest cmd/main config/privilege config/resource wizard/install \
-    app/backend/src/index.js app/frontend/src/App.vue app/ui/config \
+    app/backend/src/index.js app/backend/LICENSE app/frontend/src/App.vue app/ui/config \
     app/docker/docker-compose.yaml app/docker/Dockerfile; do
     if [ ! -e "$SIM/$p" ]; then echo "    ✗ 缺失 $p"; ok=0; fi
   done
+  # LICENSE 不应在外层根目录（避免触发 fnOS 自动英文协议步骤）
+  if [ -e "$SIM/LICENSE" ]; then echo "    ✗ 外层不应有 LICENSE（会触发 fnOS 自动渲染英文协议步骤）"; ok=0; fi
   # 校验 cmd/main 有执行位
   for f in "$SIM/cmd/main"; do
     if [ ! -x "$f" ]; then echo "    ✗ 无执行位 $f"; ok=0; fi

@@ -6,7 +6,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: clawvault:1.0.3
+    image: clawvault:1.0.5
     container_name: clawvault
     restart: unless-stopped
     ports:
