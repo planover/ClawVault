@@ -1,35 +1,57 @@
 #!/bin/sh
 # ClawVault fnOS 生命周期统一入口（cmd/main，标准 fnpack Docker 应用约定）
 # fnOS 调用：cmd/main {start|stop|status}
+# 安装后目录布局（fpk 解到 ${TRIM_APPDEST}/）：
+#   ${TRIM_APPDEST}/cmd/main            ← 此脚本
+#   ${TRIM_APPDEST}/app/docker/         ← docker-compose.yaml
+#   ${TRIM_APPDEST}/app/backend/        ← 后端
+# 退出码约定（fnOS 文档）：
+#   start : 0=成功 / 非 0=失败
+#   stop  : 0=成功
+#   status: 0=运行中 / 3=未运行（fnOS 约定）
+# 把错误写入 ${TRIM_TEMP_LOGFILE}（fnOS 用户可见错误通道），便于在 NAS 报错面板定位。
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+APP_DIR="${TRIM_APPDEST:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 DOCKER_DIR="$APP_DIR/app/docker"
-# 必须与 app/docker/docker-compose.yaml 中 container_name 完全一致（grep 用 ^NAME\$）
+LOG_DIR="${TRIM_PKGVAR:-$APP_DIR/var}"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+LOG_FILE="${TRIM_TEMP_LOGFILE:-$LOG_DIR/main.log}"
+# 必须与 app/docker/docker-compose.yaml 中 container_name 完全一致
 CONTAINER_NAME="clawvault"
 
-cmd_dc() {
-  ( cd "$DOCKER_DIR" && docker compose "$@" )
-}
+# 把文本同时写 TRIM_TEMP_LOGFILE 与 PKGVAR 日志；TRIM_TEMP_LOGFILE 是 fnOS 报错面板通道
+say() { printf '%s\n' "$*"; printf '%s\n' "$*" >> "$LOG_FILE" 2>/dev/null || true; }
+die() { say "ClawVault: $*"; exit 1; }
 
 case "${1:-}" in
   start)
-    cmd_dc up -d --build
+    say "start: APP_DIR=$APP_DIR DOCKER_DIR=$DOCKER_DIR"
+    [ -d "$DOCKER_DIR" ] || die "DOCKER_DIR 不存在: $DOCKER_DIR（fpk 未完整解包？）"
+    [ -f "$DOCKER_DIR/docker-compose.yaml" ] || die "compose 文件缺失: $DOCKER_DIR/docker-compose.yaml"
+    command -v docker >/dev/null 2>&1 || die "宿主 docker 命令不存在，请先在 fnOS 中启用 Docker 服务"
+    ( cd "$DOCKER_DIR" && docker compose up -d --build ) || die "docker compose up -d --build 失败，请到 SSH 查看 ${LOG_FILE}"
+    say "start: ok"
     ;;
   stop)
-    cmd_dc down || true
+    say "stop: $DOCKER_DIR"
+    if [ -d "$DOCKER_DIR" ]; then
+      ( cd "$DOCKER_DIR" && docker compose down ) || say "stop: docker compose down 失败(已忽略)"
+    fi
+    say "stop: ok"
     ;;
   status)
-    if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
-      echo "running"
+    if command -v docker >/dev/null 2>&1 \
+       && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"; then
+      say "status: running ($CONTAINER_NAME)"
       exit 0
     fi
-    echo "stopped"
-    exit 1
+    say "status: stopped"
+    exit 3
     ;;
   *)
-    echo "用法: main {start|stop|status}" >&2
+    printf '用法: main {start|stop|status}\n' >&2
     exit 1
     ;;
 esac
