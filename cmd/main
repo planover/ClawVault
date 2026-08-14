@@ -1,20 +1,32 @@
 #!/bin/sh
-# ClawVault fnOS 生命周期统一入口（cmd/main）
-# fnOS 调用约定：cmd/main {start|stop|status}
+# ClawVault fnOS 生命周期统一入口（cmd/main，标准 fnpack Docker 应用约定）
+# fnOS 调用：cmd/main {start|stop|status}
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ACTION="$1"
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DOCKER_DIR="$APP_DIR/app/docker"
+# 必须与 app/docker/docker-compose.yaml 中 container_name 完全一致（grep 用 ^NAME\$）
+CONTAINER_NAME="clawvault"
 
-case "$ACTION" in
+cmd_dc() {
+  ( cd "$DOCKER_DIR" && docker compose "$@" )
+}
+
+case "${1:-}" in
   start)
-    sh "$SCRIPT_DIR/start.sh"
+    cmd_dc up -d --build
     ;;
   stop)
-    sh "$SCRIPT_DIR/stop.sh"
+    cmd_dc down || true
     ;;
   status)
-    sh "$SCRIPT_DIR/status.sh"
+    if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+      echo "running"
+      exit 0
+    fi
+    echo "stopped"
+    exit 1
     ;;
   *)
     echo "用法: main {start|stop|status}" >&2
