@@ -1,10 +1,10 @@
 #!/bin/sh
 # ClawVault fnOS 生命周期统一入口（cmd/main，标准 fnpack Docker 应用约定）
 # fnOS 调用：cmd/main {start|stop|status}
-# 安装后目录布局（fpk 解到 ${TRIM_APPDEST}/）：
-#   ${TRIM_APPDEST}/cmd/main            ← 此脚本
-#   ${TRIM_APPDEST}/app/docker/         ← docker-compose.yaml
-#   ${TRIM_APPDEST}/app/backend/        ← 后端
+# 安装后目录布局（fpk 解到 ${TRIM_APPDEST}/，外层条目 + app.tgz 内容直接铺平）：
+#   ${TRIM_APPDEST}/cmd/main              ← 此脚本
+#   ${TRIM_APPDEST}/docker/               ← app.tgz 内容（无 app/ 包装层）
+#   ${TRIM_APPDEST}/backend/ frontend/ ui/ ← 同上
 # 退出码约定（fnOS 文档）：
 #   start : 0=成功 / 非 0=失败
 #   stop  : 0=成功
@@ -14,11 +14,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="${TRIM_APPDEST:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-DOCKER_DIR="$APP_DIR/app/docker"
+DOCKER_DIR="$APP_DIR/docker"
 LOG_DIR="${TRIM_PKGVAR:-$APP_DIR/var}"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="${TRIM_TEMP_LOGFILE:-$LOG_DIR/main.log}"
-# 必须与 app/docker/docker-compose.yaml 中 container_name 完全一致
+# 必须与 docker/docker-compose.yaml 中 container_name 完全一致
 CONTAINER_NAME="clawvault"
 
 # 把文本同时写 TRIM_TEMP_LOGFILE 与 PKGVAR 日志；TRIM_TEMP_LOGFILE 是 fnOS 报错面板通道

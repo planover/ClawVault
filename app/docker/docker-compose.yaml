@@ -1,12 +1,13 @@
-# ClawVault docker-compose（fnOS 标准 Docker 应用布局：app/docker/docker-compose.yaml）
-# 构建上下文设到 app/docker/..（即 app/），这样 Dockerfile 能直接 COPY app/{backend,frontend}
+# ClawVault docker-compose（fnOS 标准 Docker 应用布局）
 # 由 cmd/main 调 docker compose up -d --build 启动
+# 构建上下文设为 ..（即 app/），Dockerfile 在 ../docker/ 下，这样 Docker 能用
+# COPY backend/、COPY frontend/ 等相对路径（docker build context 禁止 COPY ../）
 services:
   clawvault:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: clawvault:1.0.5
+    image: clawvault:1.0.9
     container_name: clawvault
     restart: unless-stopped
     ports:
