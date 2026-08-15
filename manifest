@@ -1,5 +1,5 @@
 appname=clawvault
-version=1.0.7
+version=1.0.8
 display_name="ClawVault（爪匣）"
 desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
@@ -25,10 +25,11 @@ desktop_index_entry_name="ClawVault"
 service_port=6789
 checkport=false
 disable_authorization_path=false
-changelog="""1.0.7：根除 v1.0.3~v1.0.6 NAS 上"应用启动失败"的真实原因。之前所有版本都用了自作聪明的"双层 tar.gz + app.tgz"格式，但 fnpack 官方生成的是"单层 fpk + app/ 作为顶层子目录之一"，fnOS 安装器不认 app.tgz 这层结构，导致 /var/apps/clawvault 下没有 app/、backend/、frontend/、ui/、docker/ 任何目录，cmd/main 找不到 DOCKER_DIR 直接报错。改为 fnpack 标准布局后，fpk 顶层为 app/ cmd/ config/ wizard/ manifest ICON.PNG ICON_256.PNG + README.md + CONTRIBUTING.md，app/ 下含 backend frontend ui docker 四个子目录，cmd/main 路径 ${TRIM_APPDEST}/app/docker 保持不变。
-1.0.6：修复 v1.0.5「执行应用启动脚本失败」。cmd/main 改用 ${TRIM_APPDEST}（fnOS 注入的应用根路径）定位 docker/ 与日志目录，并把诊断日志写到 ${TRIM_PKGVAR}/main.log，便于在 NAS 上追踪真实失败原因。
-1.0.5：安装向导《许可协议》合并为一步（中英双语：中文摘要 + 完整英文 AGPL-3.0 内嵌），不再拆成两步；LICENSE 从 fpk 外层挪到 app/backend/ 以避免 fnOS 自动渲染独立的英文协议步骤。Dockerfile 基础镜像回滚到 node:18（与 v1.0.3 一致，根除 1.0.4 在 NAS 上的"本地应用启动失败"）。
-1.0.4：新增飞牛安装向导 wizard/install（JSON），在安装流程中展示中文《许可协议》（AGPL-3.0 摘要）并要求勾选同意方可继续；修正此前 wizard/install.sh 不会被渲染的问题。
+changelog="""1.0.8：恢复 fpk 双层结构（fnpack 官方规范）。v1.0.7 我把 app/ 作为顶层子目录直接打包，但 fnpack 官方结构是「外层 fpk 根目录含 app.tgz、内层 app.tgz 含 backend/frontend/ui/docker」：fnOS 安装器第一步解外层 fpk 拿到 app.tgz，第二步解 app.tgz 到 ${TRIM_APPDEST}/app/。v1.0.7 没有 app.tgz，fnOS 直接报"解压 app.tgz 失败"，应用根本没装上。改 build-fpk.sh：内层 `cd app && tar -czf ../app.tgz backend frontend ui docker`、外层 fpk 列 `manifest cmd wizard config ICON.PNG ICON_256.PNG app.tgz`；--check 自动模拟两步解压校验。cmd/main 路径 ${TRIM_APPDEST}/app/docker 保持不变。
+1.0.7：误把 fpk 改为"单层 + app/ 作为顶层子目录"——不符合 fnpack 规范，fnOS 安装器找不到 app.tgz 而失败。
+1.0.6：修复 v1.0.5「执行应用启动脚本失败」。cmd/main 改用 ${TRIM_APPDEST} 定位 docker/ 与日志，日志写 ${TRIM_PKGVAR}/main.log，便于 NAS 追踪真实失败原因。
+1.0.5：安装向导《许可协议》合并为一步（中英双语：中文摘要 + 完整英文 AGPL-3.0 内嵌），不再拆成两步；LICENSE 从 fpk 外层挪到 app/backend/；Dockerfile 基础镜像回滚到 node:18。
+1.0.4：新增飞牛安装向导 wizard/install（JSON），安装流程中展示中文《许可协议》并要求勾选同意方可继续；修正此前 wizard/install.sh 不会被渲染的问题。
 1.0.3：迁移至 fnpack 标准 Docker 应用布局（app/docker/Dockerfile + app/docker/docker-compose.yaml，cmd/main 用 docker compose 启动容器并通过 container_name 检查状态）；manifest 加 checkport=false、platform=all；解决"本地应用启动失败"。
 1.0.2：修正 fpk 项目布局（ui/ → app/ui/、补 config/resource、补 cmd 生命周期 stub），改为 fnpack 双层 tar.gz 格式。
 1.0.1：新增本地文件投递 Provider（FileDrop）、channels.json 改用 AES-256-GCM 加密凭据、补充单元测试与架构图；fpk 改为镜像缺失时本地 docker build 自包含安装。
