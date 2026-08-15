@@ -28,3 +28,10 @@ disable_authorization_path=false
 changelog="""1.0.9：修复 v1.0.8 启动失败。NAS 实测（sudo find）确认 v1.0.8 fpk 解包后实际布局是 `${TRIM_APPDEST}/{docker,backend,frontend,ui}/`——fnOS 把 app.tgz 内容**直接解到应用根**，不带 app/ 中间包装层；之前我在 v1.0.3 时错猜了"app.tgz 解到 ${TRIM_APPDEST}/app/"，所以 cmd/main 找 ${TRIM_APPDEST}/app/docker 一直不存在。修法：cmd/main 中 DOCKER_DIR 改 `${TRIM_APPDEST}/docker`，docker-compose.yaml image tag 升级到 1.0.9（docker 缓存命中也要识别新镜像）。fpk 结构与 v1.0.8 一致无需变。
 1.0.8：恢复 fpk 双层结构（fnpack 官方规范）。v1.0.7 我把 app/ 作为顶层子目录直接打包，但 fnpack 官方是双层：外层 fpk 根目录含 app.tgz、内层 app.tgz 含 backend/frontend/ui/docker。fnOS 报"解压 app.tgz 失败"。改 build-fpk.sh：内层 `cd app && tar -czf ../app.tgz backend frontend ui docker`、外层 fpk 列 `manifest cmd wizard config ICON.PNG ICON_256.PNG app.tgz`；--check 自动模拟两步解压校验。但 cmd/main 路径仍写错（见 v1.0.9 修正）。
 1.0.7：误把 fpk 改为"单层 + app/ 作为顶层子目录"——不符合 fnpack 规范，fnOS 安装器找不到 app.tgz 而失败。
+1.0.6：修复 v1.0.5「执行应用启动脚本失败」。cmd/main 改用 ${TRIM_APPDEST} 定位 docker/ 与日志，日志写 ${TRIM_PKGVAR}/main.log，便于 NAS 追踪真实失败原因。
+1.0.5：安装向导《许可协议》合并为一步（中英双语：中文摘要 + 完整英文 AGPL-3.0 内嵌），不再拆成两步；LICENSE 从 fpk 外层挪到 app/backend/；Dockerfile 基础镜像回滚到 node:18。
+1.0.4：新增飞牛安装向导 wizard/install（JSON），安装流程中展示中文《许可协议》并要求勾选同意方可继续；修正此前 wizard/install.sh 不会被渲染的问题。
+1.0.3：迁移至 fnpack 标准 Docker 应用布局（app/docker/Dockerfile + app/docker/docker-compose.yaml，cmd/main 用 docker compose 启动容器并通过 container_name 检查状态）；manifest 加 checkport=false、platform=all；解决"本地应用启动失败"。
+1.0.2：修正 fpk 项目布局（ui/ → app/ui/、补 config/resource、补 cmd 生命周期 stub），改为 fnpack 双层 tar.gz 格式。
+1.0.1：新增本地文件投递 Provider（FileDrop）、channels.json 改用 AES-256-GCM 加密凭据、补充单元测试与架构图；fpk 改为镜像缺失时本地 docker build 自包含安装。
+1.0.0 首发：多 Bot 可插拔 Provider 接入（微信 ClawBot / 通用 Webhook / Telegram / 钉钉飞书企微 / Discord Slack）、AI 自动分类、飞牛文件系统归档、Web 管理与检索、演示模式。"""
