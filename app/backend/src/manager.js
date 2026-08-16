@@ -132,6 +132,14 @@ export class ChannelManager {
     ch.startLogin().catch(() => {});
   }
 
+  // 重命名通道（仅改显示名；归档文件夹与 DB 由 storage.renameChannel 负责）
+  renameChannel(id, name) {
+    const ch = this.channels.get(id);
+    if (!ch) throw new Error('通道不存在');
+    ch.name = name;
+    this._persist();
+  }
+
   // Webhook 类入站：归一化后进入归档链路。返回 { verify } 时由路由直接回显（Slack 订阅验证）。
   async inbound(id, body, headers) {
     const ch = this.channels.get(id);

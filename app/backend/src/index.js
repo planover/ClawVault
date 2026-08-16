@@ -17,6 +17,7 @@ import createChatsRouter from './routes/chats.js';
 import createVoiceRouter from './routes/voice.js';
 import createMediaRouter from './routes/media.js';
 import createHealthRouter from './routes/health.js';
+import createAboutRouter from './routes/about.js';
 
 // ---- 设置持久化（覆盖默认配置） ----
 function loadSettings() {
@@ -162,13 +163,14 @@ app.use(express.json());
 
 if (config.demoMode) startDemoMode();
 
-app.use('/api/channels', createChannelsRouter({ manager }));
+app.use('/api/channels', createChannelsRouter({ manager, storage }));
 app.use('/api/messages', createMessagesRouter({ storage, ws }));
 app.use('/api/folders', createFoldersRouter({ storage }));
 app.use('/api/settings', createSettingsRouter({ config, storage, saveSettings }));
 app.use('/api/chats', createChatsRouter({ storage }));
 app.use('/api/voice', createVoiceRouter({ storage }));
 app.use('/api/media', createMediaRouter({ storage }));
+app.use('/api/about', createAboutRouter());
 app.use('/api/health', createHealthRouter({ storage, manager, config, startedAt }));
 
 // 已注册的 bot 接入类型（前端"添加通道"表单据此渲染）

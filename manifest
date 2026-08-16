@@ -1,5 +1,5 @@
 appname=clawvault
-version=1.0.12
+version=1.0.13
 display_name="ClawVault（爪匣）"
 desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
@@ -25,7 +25,8 @@ desktop_index_entry_name="ClawVault"
 service_port=6789
 checkport=false
 disable_authorization_path=false
-changelog="""1.0.10：Web 界面细节优化与功能补全。新增消息全文搜索框、按类型筛选（文本/语音/图片/视频/文件）、分页「加载更多」；视觉与无障碍打磨（设计 token、焦点可见态、加载/空状态、对比度达 WCAG 2.2 AA）；移动端响应式（≤768px 侧栏抽屉化、详情全屏覆盖层）；统计条显示归档总数。后端 listMessages 新增 kind 类型筛选参数。fpk 结构与 v1.0.9 一致。
+changelog="""1.0.13：多媒体与体验大补（基于 v1.0.12 iLink AES-128-ECB 真实字节下载）。①表情包：修复接收端表情包（sticker）无法加载——前端此前只渲染 image，现与图片同链路渲染并增加加载失败兜底（占位+「媒体加载失败」提示）。②语音双态：原始语音不再丢失，saveVoiceFile 改用 decryptIlink 解密真实音频、按文件魔数识别真实后缀（amr/wav/mp3/flac）；列表与详情在文字下方折叠「🎧 听原文」语音条，点击即用 <audio> 播放。③关于页：设置新增「关于 ClawVault（爪匣）」模块，展示版本号、更新日志、开发者 planover、AGPL-3.0 协议与隐私政策入口（采用 ClawVault 真实信息）。④响应式：针对横竖屏切换/不同分辨率重构布局（Flexbox/Grid），修复按钮遮挡文本、卡片超出屏幕等重叠偏移；新增 ≤1100px 中段断点。⑤通道改名：新增重命名入口（≤20 字、特殊字符过滤），同步更新历史记录 media/voice 路径与通知。
+1.0.10：Web 界面细节优化与功能补全。新增消息全文搜索框、按类型筛选（文本/语音/图片/视频/文件）、分页「加载更多」；视觉与无障碍打磨（设计 token、焦点可见态、加载/空状态、对比度达 WCAG 2.2 AA）；移动端响应式（≤768px 侧栏抽屉化、详情全屏覆盖层）；统计条显示归档总数。后端 listMessages 新增 kind 类型筛选参数。fpk 结构与 v1.0.9 一致。
 1.0.9：修复 v1.0.8 启动失败。NAS 实测（sudo find）确认 v1.0.8 fpk 解包后实际布局是 `${TRIM_APPDEST}/{docker,backend,frontend,ui}/`——fnOS 把 app.tgz 内容**直接解到应用根**，不带 app/ 中间包装层；之前我在 v1.0.3 时错猜了"app.tgz 解到 ${TRIM_APPDEST}/app/"，所以 cmd/main 找 ${TRIM_APPDEST}/app/docker 一直不存在。修法：cmd/main 中 DOCKER_DIR 改 `${TRIM_APPDEST}/docker`，docker-compose.yaml image tag 升级到 1.0.9（docker 缓存命中也要识别新镜像）。fpk 结构与 v1.0.8 一致无需变。
 1.0.8：恢复 fpk 双层结构（fnpack 官方规范）。v1.0.7 我把 app/ 作为顶层子目录直接打包，但 fnpack 官方是双层：外层 fpk 根目录含 app.tgz、内层 app.tgz 含 backend/frontend/ui/docker。fnOS 报"解压 app.tgz 失败"。改 build-fpk.sh：内层 `cd app && tar -czf ../app.tgz backend frontend ui docker`、外层 fpk 列 `manifest cmd wizard config ICON.PNG ICON_256.PNG app.tgz`；--check 自动模拟两步解压校验。但 cmd/main 路径仍写错（见 v1.0.9 修正）。
 1.0.7：误把 fpk 改为"单层 + app/ 作为顶层子目录"——不符合 fnpack 规范，fnOS 安装器找不到 app.tgz 而失败。

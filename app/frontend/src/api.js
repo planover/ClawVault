@@ -16,6 +16,11 @@ export const api = {
       body: JSON.stringify({ name, providerType, providerConfig }),
     }),
   deleteChannel: (id) => getJson(`/api/channels/${id}`, { method: 'DELETE' }),
+  renameChannel: (id, name) =>
+    getJson(`/api/channels/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name }),
+    }),
   loginChannel: (id) => getJson(`/api/channels/${id}/login`, { method: 'POST' }),
   reLoginChannel: (id) => getJson(`/api/channels/${id}/relogin`, { method: 'POST' }),
   listMessages: (q = {}) => {
@@ -35,6 +40,7 @@ export const api = {
   chats: () => getJson('/api/chats'),
   voiceUrl: (id) => `/api/voice/${id}`,
   mediaUrl: (id) => `/api/media/${id}`,
+  about: () => getJson('/api/about'),
   getSettings: () => getJson('/api/settings'),
   saveSettings: (body) =>
     getJson('/api/settings', { method: 'POST', body: JSON.stringify(body) }),

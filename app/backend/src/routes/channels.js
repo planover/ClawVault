@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-export default function createChannelsRouter({ manager }) {
+export default function createChannelsRouter({ manager, storage }) {
   const r = Router();
 
   r.get('/', (req, res) => res.json(manager.listChannels()));
@@ -22,6 +22,22 @@ export default function createChannelsRouter({ manager }) {
   r.delete('/:id', (req, res) => {
     manager.removeChannel(req.params.id);
     res.json(manager.listChannels());
+  });
+
+  // 重命名通道（显示名）：同步更新归档文件夹与 DB 中的历史记录
+  r.put('/:id', (req, res) => {
+    const name = (req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: '名称不能为空' });
+    try {
+      const ch = manager.getChannel(req.params.id);
+      if (!ch) return res.status(404).json({ error: '通道不存在' });
+      const oldName = ch.name;
+      storage.renameChannel({ channelId: req.params.id, oldName, newName: name });
+      manager.renameChannel(req.params.id, name);
+      res.json(manager.listChannels());
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
   });
 
   r.post('/:id/login', async (req, res) => {

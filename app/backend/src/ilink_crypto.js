@@ -51,6 +51,12 @@ export function detectMediaExt(buf) {
   if (h[0] === 0x1a && h[1] === 0x45 && h[2] === 0xdf && h[3] === 0xa3) return 'webm';
   if (h[4] === 0x66 && h[5] === 0x74 && h[6] === 0x79 && h[7] === 0x70) return 'mp4'; // ftyp
   if (h[0] === 0x4f && h[1] === 0x67 && h[2] === 0x67 && h[3] === 0x53) return 'ogg';
+  // 音频（语音/音乐）
+  if (h[0] === 0x23 && h[1] === 0x21 && h[2] === 0x41 && h[3] === 0x4d && h[4] === 0x52) return 'amr'; // #!AMR
+  if (h[0] === 0x52 && h[1] === 0x49 && h[2] === 0x46 && h[3] === 0x46 && h[8] === 0x57 && h[9] === 0x41 && h[10] === 0x56 && h[11] === 0x45) return 'wav'; // RIFF....WAVE
+  if (h[0] === 0x66 && h[1] === 0x4c && h[2] === 0x61 && h[3] === 0x43) return 'flac'; // fLaC
+  if (h[0] === 0x49 && h[1] === 0x44 && h[2] === 0x33) return 'mp3'; // ID3
+  if ((h[0] & 0xff) === 0xff && (h[1] & 0xe0) === 0xe0) return 'mp3'; // MP3 帧
   if (h[0] === 0x50 && h[1] === 0x4b && h[2] === 0x03 && h[3] === 0x04) return 'zip'; // docx/xlsx/zip
   if (h[0] === 0x3c && h[1] === 0x3f && h[2] === 0x78 && h[3] === 0x6d) return 'xml';
   return '';

@@ -61,7 +61,7 @@ export function extractMedia(msg, kind) {
 
 // 诊断：图片/视频/文件/表情消息取不到直链下载地址时，把原始 item 记录到日志，
 // 用于在真机拿到 iLink 真实媒体字段结构（image_id/aes_key/cdn…）以补齐字节下载。
-const MEDIA_KINDS = ['image', 'video', 'file', 'sticker'];
+const MEDIA_KINDS = ['image', 'video', 'file', 'sticker', 'voice'];
 function diagRawMedia(msg, kind) {
   if (!config?.dataDir) return;
   try {

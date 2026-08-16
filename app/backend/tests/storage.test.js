@@ -186,3 +186,34 @@ test('listMessages：kind 类型筛选生效', ser, () => {
   assert.equal(noImage.items[0].kind, 'voice');
 });
 
+test('saveVoiceFile：带 aesKey 自动 AES-128-ECB 解密并据真实文件头判定扩展名', ser, async () => {
+  const crypto = await import('node:crypto');
+  const key = crypto.createHash('md5').update('voicekey').digest(); // 16 字节
+  const aesKey = key.toString('hex');
+  const sample = Buffer.concat([Buffer.from([0x23, 0x21, 0x41, 0x4d, 0x52]), Buffer.from('AMRpayload-content')]); // #!AMR 头
+  const cipher = crypto.createCipheriv('aes-128-ecb', key, null);
+  const enc = Buffer.concat([cipher.update(sample), cipher.final()]);
+  const rel = await storage.saveVoiceFile({ channelName: '通道A', media: { buffer: enc, aesKey, ext: 'bin' } });
+  assert.ok(rel && rel.endsWith('.amr'), '应按真实文件头判定为 amr');
+  assert.equal(fs.readFileSync(path.join(archiveRoot, rel)).toString(), sample.toString(), '应解密还原为原始音频明文');
+});
+
+test('renameChannel：更新 channel_name、重写路径前缀并物理改名文件夹', ser, () => {
+  const s = new Storage({ dataDir: path.join(tmp, 'ren-data'), archiveRoot: path.join(tmp, 'ren-archive') });
+  s.saveMessage({ channelId: 'cx', channelName: '旧通道', peer: 'u', text: '图', kind: 'image', category: '图片', media: '旧通道/媒体/a.png' });
+  s.saveMessage({ channelId: 'cx', channelName: '旧通道', peer: 'u', text: '语音', kind: 'voice', category: '语音', voice: '旧通道/语音/b.mp3' });
+  fs.mkdirSync(path.join(tmp, 'ren-archive', '旧通道', '媒体'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'ren-archive', '旧通道', '媒体', 'a.png'), 'PNG');
+  const renamed = s.renameChannel({ channelId: 'cx', oldName: '旧通道', newName: '新通道' });
+  assert.equal(renamed, true);
+  const msgs = s.listMessages({ channelId: 'cx' }).items;
+  const img = msgs.find((m) => m.kind === 'image');
+  const voice = msgs.find((m) => m.kind === 'voice');
+  assert.equal(img.channelName, '新通道');
+  assert.equal(img.media, '新通道/媒体/a.png');
+  assert.equal(voice.voice, '新通道/语音/b.mp3');
+  assert.ok(fs.existsSync(path.join(tmp, 'ren-archive', '新通道', '媒体', 'a.png')), '文件夹应已重命名');
+  assert.ok(!fs.existsSync(path.join(tmp, 'ren-archive', '旧通道')), '旧文件夹应不存在');
+});
+
+

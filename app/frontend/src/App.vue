@@ -5,6 +5,7 @@ import FolderTree from './components/FolderTree.vue';
 import MessageList from './components/MessageList.vue';
 import ChannelDialog from './components/ChannelDialog.vue';
 import SettingsDialog from './components/SettingsDialog.vue';
+import AboutDialog from './components/AboutDialog.vue';
 
 const channels = ref([]);
 const folders = ref([]);
@@ -15,6 +16,8 @@ const selectedId = ref(null);
 const selectedMessage = ref(null);
 const showChannels = ref(false);
 const showSettings = ref(false);
+const showAbout = ref(false);
+const detailImgFailed = ref(false);
 const newCat = ref('');
 const newSub = ref('');
 
@@ -115,6 +118,7 @@ function onSelectMessage(id) {
   selectedMessage.value = messages.value.find((m) => m.id === id) || null;
   newCat.value = selectedMessage.value?.category || '';
   newSub.value = selectedMessage.value?.sub || '';
+  detailImgFailed.value = false;
   showDetail.value = true;
 }
 function closeDetail() {
@@ -150,6 +154,12 @@ function onWSEvent(e) {
 async function loadChannels() {
   channels.value = await api.listChannels();
 }
+// 通道变更（新增/删除/重命名）后，同步刷新侧栏与聊天归档列表
+async function onChannelsChanged() {
+  await loadChannels();
+  await loadFolders();
+  await loadChats();
+}
 async function loadChats() {
   try {
     chats.value = await api.chats();
@@ -177,6 +187,7 @@ onMounted(() => {
       <div class="brand">🐾 ClawVault <span class="muted">爪匣</span></div>
       <div class="spacer"></div>
       <button class="btn ghost" aria-label="通道管理" @click="showChannels = true">通道 ({{ channels.length }})</button>
+      <button class="btn ghost" aria-label="关于" @click="showAbout = true">关于</button>
       <button class="btn ghost" aria-label="设置" @click="showSettings = true">设置</button>
     </header>
 
@@ -251,9 +262,10 @@ onMounted(() => {
           <span class="muted">{{ selectedMessage.channelName }} · {{ new Date(selectedMessage.ts).toLocaleString('zh-CN') }}</span>
         </div>
         <div class="content">{{ selectedMessage.text }}</div>
-        <div v-if="selectedMessage.kind === 'image' && selectedMessage.media" class="media">
-          <div class="muted small">图片</div>
-          <img :src="api.mediaUrl(selectedMessage.id)" alt="图片" />
+        <div v-if="(selectedMessage.kind === 'image' || selectedMessage.kind === 'sticker') && selectedMessage.media" class="media">
+          <div class="muted small">{{ selectedMessage.kind === 'sticker' ? '表情' : '图片' }}</div>
+          <img v-if="!detailImgFailed" :src="api.mediaUrl(selectedMessage.id)" alt="图片" @error="detailImgFailed = true" />
+          <div v-else class="muted small">🖼️ 媒体加载失败</div>
         </div>
         <div v-else-if="selectedMessage.kind === 'video' && selectedMessage.media" class="media">
           <div class="muted small">视频</div>
@@ -263,7 +275,7 @@ onMounted(() => {
           <div class="muted small">文件</div>
           <a :href="api.mediaUrl(selectedMessage.id)" target="_blank" download>📎 下载文件</a>
         </div>
-        <div v-else-if="['image', 'video', 'file'].includes(selectedMessage.kind) && !selectedMessage.media" class="media">
+        <div v-else-if="['image', 'video', 'file', 'sticker'].includes(selectedMessage.kind) && !selectedMessage.media" class="media">
           <div class="muted small">⚠️ 该媒体未保存（旧版本或接收时缺失）</div>
         </div>
         <div v-if="selectedMessage.voice" class="voice">
@@ -284,8 +296,9 @@ onMounted(() => {
       </section>
     </div>
 
-    <ChannelDialog :show="showChannels" :channels="channels" @close="showChannels = false" @changed="loadChannels" />
+    <ChannelDialog :show="showChannels" :channels="channels" @close="showChannels = false" @changed="onChannelsChanged" />
     <SettingsDialog :show="showSettings" @close="showSettings = false" @saved="loadFolders" />
+    <AboutDialog :show="showAbout" @close="showAbout = false" />
   </div>
 </template>
 
@@ -412,6 +425,8 @@ onMounted(() => {
 }
 .detail .content {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: 14px;
   line-height: 1.6;
   color: var(--c-text);
@@ -447,6 +462,8 @@ onMounted(() => {
 }
 .chat-name {
   font-weight: 500;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .chat-dl {
   color: var(--c-primary);
@@ -527,6 +544,19 @@ onMounted(() => {
   position: absolute;
   top: 10px;
   right: 10px;
+}
+
+/* 平板/中等屏：收窄侧栏与详情，避免主区过窄导致文字/控件拥挤 */
+@media (max-width: 1100px) and (min-width: 769px) {
+  .side {
+    width: 210px;
+  }
+  .detail {
+    width: 300px;
+  }
+  .toolbar {
+    gap: 8px;
+  }
 }
 
 /* 移动端响应式：≤768px 折叠为单栏 */

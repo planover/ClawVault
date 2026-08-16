@@ -5,6 +5,22 @@ import crypto from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { decryptIlink, detectMediaExt } from './ilink_crypto.js';
 
+// 判断 buffer 是否已是可识别的图片/音频文件头（用于决定是否需要 AES 解密）
+function isMediaHeader(buf) {
+  if (!buf || buf.length < 12) return false;
+  const b = buf;
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return true; // PNG
+  if (b[0] === 0xff && b[1] === 0xd8) return true; // JPEG
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return true; // GIF
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return true; // RIFF / WEBP
+  if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) return true; // ID3 (MP3)
+  if ((b[0] & 0xff) === 0xff && (b[1] & 0xe0) === 0xe0) return true; // MP3 帧
+  if (b[0] === 0x23 && b[1] === 0x21 && b[2] === 0x41 && b[3] === 0x4d && b[4] === 0x52) return true; // #!AMR
+  if (b[0] === 0x4f && b[1] === 0x67 && b[2] === 0x67 && b[3] === 0x53) return true; // Ogg
+  if (b[0] === 0x66 && b[1] === 0x4c && b[2] === 0x61 && b[3] === 0x43) return true; // fLaC
+  return false;
+}
+
 // 归档存储：SQLite 元数据索引 + 飞牛文件系统分类落盘
 // 纯文本 / 语音 → 写入 [通道]/聊天.xlsx（不在分类文件夹落 Markdown）
 // 图片 / 文件 / 视频 / 链接等 → 按平台类型归入分类文件夹（Markdown + SQLite）
@@ -160,32 +176,58 @@ export class Storage {
     return row ? this._map(row) : null;
   }
 
-  // 保存语音音频：下载/写入到 [通道]/语音/<时间戳>.<ext>，返回相对归档根的路径（或原 URL）
-  // media: { url?: string, buffer?: Buffer, ext?: string }
+  // 保存语音音频：下载/写入到 [通道]/语音/<时间戳>.<ext>，返回相对归档根路径（或原 URL）
+  // media: { url?: string, buffer?: Buffer, ext?: string, aesKey?: string }
+  // 若带 aesKey（iLink 加密媒体），下载/写入后做 AES-128-ECB 解密，并按真实文件头判定扩展名。
   async saveVoiceFile({ channelName, media }) {
     if (!media) return '';
-    const ext = (media.ext || (media.url && path.extname(media.url).slice(1)) || 'mp3').replace(/[^\w]/g, '');
-    const stamp = this._fileStamp(Date.now());
-    const fname = `${stamp}-${crypto.randomBytes(3).toString('hex')}.${ext || 'mp3'}`;
     const dir = this._voiceDir(channelName);
     fs.mkdirSync(dir, { recursive: true });
-    const fpath = path.join(dir, fname);
+    const stamp = this._fileStamp(Date.now());
     try {
-      if (media.buffer) {
-        fs.writeFileSync(fpath, media.buffer);
-      } else if (media.url) {
+      let buf;
+      if (media.buffer) buf = media.buffer;
+      else if (media.url) {
         const res = await fetch(media.url);
         if (!res.ok) throw new Error(`下载音频失败 ${res.status}`);
-        const buf = Buffer.from(await res.arrayBuffer());
-        fs.writeFileSync(fpath, buf);
-      } else {
-        return '';
-      }
-      return path.join(Storage.safe(channelName), '语音', fname); // 相对归档根
+        buf = Buffer.from(await res.arrayBuffer());
+      } else return '';
+      // iLink 加密语音：AES-128-ECB 解密（已是音频头则跳过，兼容明文来源）
+      if (media.aesKey && !isMediaHeader(buf)) buf = decryptIlink(buf, media.aesKey);
+      // 扩展名：优先真实文件头判定，其次 media.ext / URL 后缀
+      const urlPath = media.url ? media.url.split('?')[0] : '';
+      const ext = detectMediaExt(buf) || media.ext || (urlPath && path.extname(urlPath).slice(1)) || 'mp3';
+      const safeExt = String(ext).replace(/[^\w]/g, '').slice(0, 8) || 'mp3';
+      const fname = `${stamp}-${crypto.randomBytes(3).toString('hex')}.${safeExt}`;
+      const fpath = path.join(dir, fname);
+      fs.writeFileSync(fpath, buf);
+      return path.join(Storage.safe(channelName), '语音', fname);
     } catch {
-      // 下载失败则至少保留原 URL 作为线索
       return media.url || '';
     }
+  }
+
+  // 重命名通道：更新 DB 的 channel_name、重写 path/media/voice 中的旧文件夹前缀，并物理重命名归档文件夹。
+  // 返回是否重命名了磁盘文件夹。
+  renameChannel({ channelId, oldName, newName }) {
+    const oldSafe = Storage.safe(oldName);
+    const newSafe = Storage.safe(newName);
+    this.db.prepare('UPDATE messages SET channel_name=? WHERE channel_id=?').run(newName, channelId);
+    if (oldSafe === newSafe) return false;
+    const like = oldSafe + '/';
+    for (const col of ['path', 'media', 'voice']) {
+      this.db
+        .prepare(`UPDATE messages SET ${col} = REPLACE(${col}, ?, ?) WHERE channel_id=? AND ${col} LIKE ?`)
+        .run(oldSafe + '/', newSafe + '/', channelId, like + '%');
+    }
+    try {
+      const from = path.join(this.archiveRoot, oldSafe);
+      const to = path.join(this.archiveRoot, newSafe);
+      if (fs.existsSync(from)) fs.renameSync(from, to);
+    } catch (e) {
+      console.error('[ClawVault] 重命名归档文件夹失败:', e?.message || e);
+    }
+    return true;
   }
 
   // 向 [通道]/聊天.xlsx 追加一行（纯文本/语音聊天记录）
@@ -255,8 +297,8 @@ export class Storage {
       } else {
         return '';
       }
-      // iLink 加密媒体：AES-128-ECB 解密
-      if (media.aesKey) {
+      // iLink 加密媒体：AES-128-ECB 解密（已是可识别媒体头则跳过，兼容明文来源）
+      if (media.aesKey && !isMediaHeader(buf)) {
         buf = decryptIlink(buf, media.aesKey);
       }
       // 扩展名：优先用解密后真实文件头判定，其次回落 media.ext / URL 后缀

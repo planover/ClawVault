@@ -71,6 +71,31 @@ const qrSrc = computed(() => {
   return '';
 });
 
+// 通道重命名：限制 20 字、过滤文件系统非法字符
+const editingId = ref(null);
+const editName = ref('');
+function startRename(ch) {
+  editingId.value = ch.id;
+  editName.value = ch.name;
+}
+function sanitizeName(v) {
+  return (v || '').replace(/[\\/:*?"<>|]/g, '').slice(0, 20);
+}
+function cancelRename() {
+  editingId.value = null;
+  editName.value = '';
+}
+async function saveRename(ch) {
+  const name = sanitizeName(editName.value);
+  if (!name || name === ch.name) {
+    cancelRename();
+    return;
+  }
+  await api.renameChannel(ch.id, name);
+  cancelRename();
+  emit('changed');
+}
+
 function close() {
   qr.value = null;
   notice.value = '';
@@ -118,14 +143,29 @@ function close() {
 
       <!-- 已有通道 -->
       <div v-for="ch in channels" :key="ch.id" class="ch-row">
-        <div>
-          <b>{{ ch.providerIcon }} {{ ch.name }}</b>
-          <span class="tag ok" v-if="ch.connected">已连接</span>
-          <span class="tag warn" v-else-if="ch.needRescan">需重新扫码</span>
-          <span class="muted" v-else>未连接</span>
-          <span class="muted small">· {{ ch.providerName }}</span>
+        <div class="ch-main">
+          <template v-if="editingId === ch.id">
+            <input
+              class="input rename-input"
+              :value="editName"
+              maxlength="20"
+              @input="editName = sanitizeName($event.target.value)"
+              @keyup.enter="saveRename(ch)"
+              @keyup.esc="cancelRename"
+            />
+            <button class="btn ghost small-btn" @click="saveRename(ch)">保存</button>
+            <button class="btn ghost small-btn" @click="cancelRename">取消</button>
+          </template>
+          <template v-else>
+            <b>{{ ch.providerIcon }} {{ ch.name }}</b>
+            <button class="icon-edit" title="重命名通道" aria-label="重命名通道" @click="startRename(ch)">✎</button>
+            <span class="tag ok" v-if="ch.connected">已连接</span>
+            <span class="tag warn" v-else-if="ch.needRescan">需重新扫码</span>
+            <span class="muted" v-else>未连接</span>
+            <span class="muted small">· {{ ch.providerName }}</span>
+          </template>
         </div>
-        <div class="row">
+        <div class="row" v-if="editingId !== ch.id">
           <button class="btn ghost" @click="login(ch)">
             {{ ch.connected ? '重连' : ch.auth === 'qr' ? '扫码登录' : '连接' }}
           </button>
@@ -200,6 +240,35 @@ function close() {
   align-items: center;
   padding: 8px 0;
   border-bottom: 1px solid #eef0f3;
+}
+.ch-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.icon-edit {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #6b7280;
+  padding: 2px 4px;
+  border-radius: 6px;
+  line-height: 1;
+}
+.icon-edit:hover {
+  background: #eef2ff;
+  color: #2563eb;
+}
+.rename-input {
+  width: 160px;
+  padding: 5px 8px;
+}
+.small-btn {
+  padding: 5px 10px;
+  font-size: 12px;
 }
 .qr {
   margin-top: 16px;
