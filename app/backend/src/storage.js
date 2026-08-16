@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import ExcelJS from 'exceljs';
+import { decryptIlink, detectMediaExt } from './ilink_crypto.js';
 
 // 归档存储：SQLite 元数据索引 + 飞牛文件系统分类落盘
 // 纯文本 / 语音 → 写入 [通道]/聊天.xlsx（不在分类文件夹落 Markdown）
@@ -237,28 +238,38 @@ export class Storage {
 
   // 保存图片 / 文件 / 视频 / 表情等媒体：下载 URL 或写入 buffer 到 [通道]/媒体/<id>.<ext>，
   // 返回相对归档根路径（下载/解析失败则记录日志并返回空串，不阻断主流程）。
-  // media: { url?: string, buffer?: Buffer, ext?: string }
+  // media: { url?: string, buffer?: Buffer, ext?: string, aesKey?: string }
+  // 若带 aesKey（iLink 加密媒体），下载/写入后做 AES-128-ECB 解密，并按真实文件头判定扩展名。
   async saveMedia({ channelName, id, media }) {
     if (!media) return '';
-    const urlPath = media.url ? media.url.split('?')[0] : '';
-    const ext = (media.ext || (urlPath && path.extname(urlPath).slice(1)) || 'bin')
-      .replace(/[^\w]/g, '')
-      .slice(0, 8) || 'bin';
     const dir = path.join(this.archiveRoot, Storage.safe(channelName), '媒体');
     fs.mkdirSync(dir, { recursive: true });
-    const fname = `${id}-${crypto.randomBytes(3).toString('hex')}.${ext}`;
-    const fpath = path.join(dir, fname);
     try {
+      let buf;
       if (media.buffer) {
-        fs.writeFileSync(fpath, media.buffer);
+        buf = media.buffer;
       } else if (media.url) {
         const res = await fetch(media.url);
         if (!res.ok) throw new Error(`下载媒体失败 ${res.status}`);
-        const buf = Buffer.from(await res.arrayBuffer());
-        fs.writeFileSync(fpath, buf);
+        buf = Buffer.from(await res.arrayBuffer());
       } else {
         return '';
       }
+      // iLink 加密媒体：AES-128-ECB 解密
+      if (media.aesKey) {
+        buf = decryptIlink(buf, media.aesKey);
+      }
+      // 扩展名：优先用解密后真实文件头判定，其次回落 media.ext / URL 后缀
+      const urlPath = media.url ? media.url.split('?')[0] : '';
+      const ext =
+        detectMediaExt(buf) ||
+        media.ext ||
+        (urlPath && path.extname(urlPath).slice(1)) ||
+        'bin';
+      const safeExt = String(ext).replace(/[^\w]/g, '').slice(0, 8) || 'bin';
+      const fname = `${id}-${crypto.randomBytes(3).toString('hex')}.${safeExt}`;
+      const fpath = path.join(dir, fname);
+      fs.writeFileSync(fpath, buf);
       return path.join(Storage.safe(channelName), '媒体', fname);
     } catch (e) {
       console.error('[ClawVault] 媒体落盘失败:', e?.message || e);

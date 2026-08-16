@@ -25,10 +25,13 @@ export function wechatKind(msg) {
   return 'text';
 }
 
-// 提取图片 / 视频 / 文件 / 语音的媒体地址，供 Storage 落盘。
-// iLink 协议字段名可能随版本变化，这里做尽量宽松的兼容：
-//   image_item.{image_url,cdn_url,url,file_url} / video_item.* / file_item|file.* / voice_item.{voice_url,url}
-// 返回 { url, ext } 或 null（纯文本 / 无可用地址时）。
+import { normalizeAesKey } from '../ilink_crypto.js';
+
+// 提取图片 / 视频 / 文件 / 语音 / 表情的媒体地址，供 Storage 落盘。
+// iLink 真机结构（已通过真机 debug 日志确认）：直链藏在
+//   <kind>_item.media.full_url，且用 <kind>_item.aeskey（hex）做 AES-128-ECB 加密。
+// 这里做尽量宽松的兼容，按优先级尝试多种字段名，并透传解密密钥。
+// 返回 { url, ext, aesKey } 或 null（纯文本 / 无可用地址时）。
 export function extractMedia(msg, kind) {
   const item = msg.item_list?.[0] || {};
   let m = null;
@@ -36,11 +39,24 @@ export function extractMedia(msg, kind) {
   else if (kind === 'video') m = item.video_item || {};
   else if (kind === 'file') m = item.file_item || item.file || {};
   else if (kind === 'voice') m = item.voice_item || {};
+  else if (kind === 'sticker') m = item.emoji_item || item.sticker_item || {};
   if (!m) return null;
-  const url = m.image_url || m.cdn_url || m.url || m.file_url || m.video_url || m.voice_url || m.thumb_url || (typeof m === 'string' ? m : null);
+  // 真机直链优先取 media.full_url；其次退化到顶层各类 url 字段
+  const url =
+    m.media?.full_url ||
+    m.full_url ||
+    m.image_url ||
+    m.cdn_url ||
+    m.url ||
+    m.file_url ||
+    m.video_url ||
+    m.voice_url ||
+    m.thumb_url ||
+    (typeof m === 'string' ? m : null);
   if (!url) return null;
+  const aesKey = normalizeAesKey(m.aeskey || m.media?.aes_key);
   const ext = (m.ext || (url.split('?')[0].split('.').pop() || 'bin')).slice(0, 6).replace(/[^\w]/g, '');
-  return { url, ext };
+  return { url, ext, aesKey };
 }
 
 // 诊断：图片/视频/文件/表情消息取不到直链下载地址时，把原始 item 记录到日志，
