@@ -72,20 +72,40 @@ test('chat 模式 reclassify：只更新 SQLite，不写 Markdown', ser, async (
   assert.equal(path.basename(updated.path), '聊天.xlsx');
 });
 
-test('非 chat 类型 reclassify：仍落 Markdown 文件', ser, async () => {
+test('非 chat 类型 reclassify：只更新 DB 标签，不生成/移动 md 文件', ser, async () => {
   const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道C', peer: 'u4', text: '一张图', kind: 'image', category: '待分类' });
-  const md1 = rec.path;
-  assert.ok(md1.endsWith('.md'));
+  assert.equal(rec.path, '', '非 chat 类不再生成 md，path 应为空');
+  const countMd = (root) => {
+    let n = 0;
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.md')) n += 1;
+      }
+    };
+    walk(root);
+    return n;
+  };
+  const before = countMd(archiveRoot);
   const updated = storage.reclassify(rec.id, '图片', '');
-  assert.ok(updated.path.endsWith('.md'));
-  assert.notEqual(updated.path, md1, '应移动到新分类目录');
+  assert.equal(updated.category, '图片');
+  assert.equal(countMd(archiveRoot), before, 'reclassify 不应生成 md 文件');
 });
 
-test('Markdown 落盘标题平台无关（ClawVault 对话归档，非写死微信）', ser, () => {
-  const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道D', peer: 'u5', text: '图示', kind: 'image', category: '图片' });
-  const md = fs.readFileSync(rec.path, 'utf8');
-  assert.match(md, /ClawVault 对话归档/);
-  assert.doesNotMatch(md, /微信对话归档/);
+test('saveMedia：图片按类型落到 图片/ 目录，文件名用消息文字做后缀', ser, async () => {
+  const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道D', peer: 'u5', text: '今天评审用的架构图', kind: 'image', category: '图片' });
+  const rel = await storage.saveMedia({
+    channelName: '通道D',
+    id: rec.id,
+    media: { buffer: Buffer.from('IMGDATA'), ext: 'png' },
+    kind: 'image',
+    text: '今天评审用的架构图',
+  });
+  assert.ok(rel, '应返回相对路径');
+  assert.match(rel, /图片[\\/].*\.png$/, '图片应落盘到 图片/ 目录');
+  assert.match(path.basename(rel, '.png'), /架构图/, '文件名应包含消息文字摘要');
+  assert.equal(fs.readFileSync(path.join(archiveRoot, rel), 'utf8'), 'IMGDATA');
 });
 
 test('saveMessage 携带 voice 字段；setVoice 可回填', ser, () => {
@@ -139,10 +159,25 @@ test('saveMessage 携带 filename 字段并能在查询中返回', ser, () => {
 
 test('saveMedia：buffer 写入媒体并返回相对路径', ser, async () => {
   const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道H', peer: 'u9', text: '图', kind: 'image', category: '图片' });
-  const rel = await storage.saveMedia({ channelName: '通道H', id: rec.id, media: { buffer: Buffer.from('IMGDATA'), ext: 'png' } });
+  const rel = await storage.saveMedia({ channelName: '通道H', id: rec.id, media: { buffer: Buffer.from('IMGDATA'), ext: 'png' }, kind: 'image', text: '图' });
   assert.ok(rel, '应返回相对路径');
-  assert.match(rel, /媒体[\\/].*\.png$/);
+  assert.match(rel, /图片[\\/].*\.png$/);
   assert.equal(fs.readFileSync(path.join(archiveRoot, rel), 'utf8'), 'IMGDATA');
+});
+
+test('saveMedia：内容相同（同通道）只存一份，返回已存在路径', ser, async () => {
+  const ch = '通道去重';
+  const payload = { buffer: Buffer.from('DUPLICATE-IMAGE'), ext: 'png' };
+  const before = fs.existsSync(path.join(archiveRoot, ch, '图片'))
+    ? fs.readdirSync(path.join(archiveRoot, ch, '图片')).filter((f) => f.endsWith('.png')).length
+    : 0;
+  const r1 = await storage.saveMedia({ channelName: ch, id: 1, media: { ...payload }, kind: 'image', text: '甲' });
+  const r2 = await storage.saveMedia({ channelName: ch, id: 2, media: { ...payload }, kind: 'image', text: '乙' });
+  assert.ok(r1 && r2, '两次都应返回路径');
+  assert.equal(r1, r2, '内容相同应复用同一文件（去重）');
+  // 磁盘只多出一个文件（不重复落盘）
+  const after = fs.readdirSync(path.join(archiveRoot, ch, '图片')).filter((f) => f.endsWith('.png')).length;
+  assert.equal(after, before + 1, '不应重复落盘');
 });
 
 test('saveMedia：URL 下载（mock fetch）写入媒体', ser, async () => {
@@ -224,6 +259,33 @@ test('renameChannel：更新 channel_name、重写路径前缀并物理改名文
   assert.equal(voice.voice, '新通道/语音/b.mp3');
   assert.ok(fs.existsSync(path.join(tmp, 'ren-archive', '新通道', '媒体', 'a.png')), '文件夹应已重命名');
   assert.ok(!fs.existsSync(path.join(tmp, 'ren-archive', '旧通道')), '旧文件夹应不存在');
+});
+
+test('migrateOldMedia：旧 媒体/ 文件按类型迁移到 图片/文件/视频/语音 并清理 md 卡片', ser, () => {
+  const s = new Storage({ dataDir: path.join(tmp, 'mig-data'), archiveRoot: path.join(tmp, 'mig-archive') });
+  const ch = '微信';
+  fs.mkdirSync(path.join(tmp, 'mig-archive', ch, '媒体'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'mig-archive', ch, '图片'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'mig-archive', ch, '媒体', 'a.png'), 'PNGDATA');
+  fs.writeFileSync(path.join(tmp, 'mig-archive', ch, '媒体', 'b.pdf'), 'PDFDATA');
+  fs.writeFileSync(path.join(tmp, 'mig-archive', ch, '图片', 'x.md'), '# ClawVault 对话归档\n\n旧卡片\n');
+  // DB 中消息指向旧 媒体/ 路径
+  s.saveMessage({ channelId: 'm', channelName: ch, peer: 'u', text: '图', kind: 'image', category: '图片', media: '微信/媒体/a.png' });
+  s.saveMessage({ channelId: 'm', channelName: ch, peer: 'u', text: '文件', kind: 'file', category: '文件', media: '微信/媒体/b.pdf' });
+
+  const stats = s.migrateOldMedia();
+  assert.ok(stats.moved >= 2, `应移动至少 2 个文件，实际 ${JSON.stringify(stats)}`);
+  assert.ok(stats.cardsRemoved >= 1, `应清理 md 卡片，实际 ${JSON.stringify(stats)}`);
+
+  const items = s.listMessages({ channelId: 'm' }).items;
+  const img = items.find((m) => m.kind === 'image');
+  const file = items.find((m) => m.kind === 'file');
+  assert.match(img.media, /图片[\\/].*\.png$/, '图片应迁移到 图片/');
+  assert.match(file.media, /文件[\\/].*\.pdf$/, '文件应迁移到 文件/');
+  assert.ok(fs.existsSync(path.join(tmp, 'mig-archive', ch, '图片', path.basename(img.media))), '图片文件应在 图片/');
+  assert.ok(fs.existsSync(path.join(tmp, 'mig-archive', ch, '文件', path.basename(file.media))), '文件应在 文件/');
+  assert.ok(!fs.existsSync(path.join(tmp, 'mig-archive', ch, '媒体', 'a.png')), '旧 媒体/ 文件应已移走');
+  assert.ok(!fs.existsSync(path.join(tmp, 'mig-archive', ch, '图片', 'x.md')), 'md 卡片应已清理');
 });
 
 

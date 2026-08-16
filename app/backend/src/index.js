@@ -55,6 +55,17 @@ loadSettings();
 
 const startedAt = Date.now();
 const storage = new Storage({ dataDir: config.dataDir, archiveRoot: config.archiveRoot });
+// 旧版本媒体文件统一存在 [通道]/媒体/，迁移到按类型划分的 图片/文件/视频/语音 目录并清理遗留 md 卡片
+try {
+  const mig = storage.migrateOldMedia();
+  if (mig.moved || mig.deduped || mig.cardsRemoved) {
+    console.log(
+      `[ClawVault] 旧媒体迁移完成：移动 ${mig.moved} 个、去重 ${mig.deduped} 个、清理卡片 ${mig.cardsRemoved} 个`,
+    );
+  }
+} catch (e) {
+  console.error('[ClawVault] 旧媒体迁移失败（不影响运行）:', e?.message || e);
+}
 const ws = new WSBroadcaster();
 
 // 消息处理链：白名单过滤 → 存「待分类」→ 广播
@@ -76,7 +87,13 @@ async function handleMessage(channel, msg) {
   // 媒体落盘（图片/文件/视频/表情）：仅当 provider 提供了 media（URL/二进制）才保存
   let mediaRel = '';
   if (msg.media && (msg.media.url || msg.media.buffer) && !Storage.isChat(msg.kind)) {
-    mediaRel = await storage.saveMedia({ channelName: channel.name, id: record.id, media: msg.media });
+    mediaRel = await storage.saveMedia({
+      channelName: channel.name,
+      id: record.id,
+      media: msg.media,
+      kind: msg.kind,
+      text: msg.text || '',
+    });
     if (mediaRel) {
       storage.setMedia(record.id, mediaRel);
       record.media = mediaRel;

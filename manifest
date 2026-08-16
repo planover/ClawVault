@@ -1,5 +1,5 @@
 appname=clawvault
-version=1.0.16
+version=1.0.17
 display_name="ClawVault（爪匣）"
 desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
@@ -7,7 +7,7 @@ desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞�
 <p><font color="green">2. 多通道：</font><br/>每个 bot 是一个独立通道，互相隔离，可同时归档你与众多 bot 的对话。</p>
 <p><font color="green">3. 只跟 bot 聊：</font><br/>仅接收「你 ↔ bot」的对话，不处理真人好友、不支持群聊，天然满足「不加好友」的纯净归档场景。</p>
 <p><font color="green">4. AI 自动分类：</font><br/>每条消息由 AI 判类，归入已有或新建的分类文件夹（支持二级分类），可人工修正。</p>
-<p><font color="green">5. 落盘到飞牛：</font><br/>对话按 <code>[归档根]/[通道]/[分类]/[子分类]/</code> 自动存入飞牛文件系统，每条消息为可读 Markdown，并提供全文检索。</p>
+<p><font color="green">5. 落盘到飞牛：</font><br/>媒体文件按类型直接存入飞牛文件系统——图片进 <code>[通道]/图片/</code>、文件进 <code>[通道]/文件/</code>、视频进 <code>[通道]/视频/</code>、语音进 <code>[通道]/语音/</code>，文件名保留原文件名或消息文字摘要，可在飞牛相册/文件管理器直接预览；纯文本与语音转写汇入 <code>[通道]/聊天.xlsx</code>；内容相同的文件自动去重只存一份。并提供全文检索。</p>
 <p><font color="green">6. Web 管理：</font><br/>在飞牛内嵌浏览器查看分类树、对话流、消息详情，实时刷新（WebSocket）。</p>
 <p>采用可插拔多 Provider 架构，数据留在你自己的飞牛，不上传第三方。</p>"""
 arch=x86_64
@@ -25,7 +25,8 @@ desktop_index_entry_name="ClawVault"
 service_port=6789
 checkport=false
 disable_authorization_path=false
-changelog="""1.0.16：修复 v1.0.15 容器在飞牛显示为 unhealthy。根因：Dockerfile 后端基础镜像 node:18-bookworm-slim 不含 curl，而 docker-compose 的 healthcheck 用 curl 探活，导致 healthcheck 持续失败（exec: "curl": executable file not found），飞牛据此判定不健康。已在 Dockerfile apt 安装列表加入 curl，healthcheck 恢复正常；应用本身自 v1.0.15 起已正常服务（/api/health 返回 ok、数据库与微信通道均正常）。
+changelog="""1.0.17：归档落盘重构——让文件能直接在飞牛浏览。此前媒体真实文件被统一塞进 [通道]/媒体/ 隐藏目录、分类目录里只剩说明用的 Markdown 卡片，导致飞牛相册/文件管理器无法直接预览。现改为：图片→[通道]/图片/、文件→[通道]/文件/（保留原始文件名）、视频→[通道]/视频/、语音→[通道]/语音/，落盘即真实原文件，可用飞牛直接打开；图片/视频文件名采用消息文字摘要做后缀；同通道内容相同的文件按 SHA-256 自动去重只存一份，避免重复占用空间；旧版本遗留的 媒体/ 目录文件启动时自动迁移到对应类型目录，并清理无用的 Markdown 卡片。另修复一处生产调用遗漏（index.js 未向 saveMedia 透传 kind/text，会导致全部媒体落入默认目录）。
+1.0.16：修复 v1.0.15 容器在飞牛显示为 unhealthy。根因：Dockerfile 后端基础镜像 node:18-bookworm-slim 不含 curl，而 docker-compose 的 healthcheck 用 curl 探活，导致 healthcheck 持续失败（exec: "curl": executable file not found），飞牛据此判定不健康。已在 Dockerfile apt 安装列表加入 curl，healthcheck 恢复正常；应用本身自 v1.0.15 起已正常服务（/api/health 返回 ok、数据库与微信通道均正常）。
 1.0.15：修复 v1.0.14 无法启用。根因：Dockerfile 中 COPY manifest /app/manifest 引用了仓库根 manifest 文件，但 fpk 解包后 docker build 上下文为 app/ 目录，manifest 不在该上下文内，导致 COPY failed: file not found in build context，docker compose up --build 在构建阶段即失败、容器从未创建。改为在 Dockerfile 通过 build arg 注入 ENV CLAWVAULT_VERSION（version.js 已有该环境变量兜底读取），不再依赖 COPY 仓库根文件。四项功能缺陷（版本显示/表情包/语音/文件原名）的修复在 v1.0.14 已落地，本版仅修正启用阻断。
 1.0.14：修复 v1.0.13 真机验证发现的四项缺陷。①版本号：Docker 镜像内缺失 manifest 文件，导致关于页版本显示为「—」；Dockerfile 现 COPY manifest /app/manifest，version.js 增加 /app/manifest 候选与环境变量兜底。②表情包：extractMedia 未兼容 emoji_item.aes_key 顶层字段，且 URL 回退字段不足；现已支持 aeskey/aes_key 多来源并补充 cover_url/icon_url/preview_url/emoji_url，确保 sticker 解密与渲染。③语音播放：iLink 语音常为 SILK/AMR 等浏览器不原生支持的格式；新增 voice_transcode.js，SILK 用 silk-wasm 解码为 PCM 后封装 WAV，AMR 用 ffmpeg 转码为 MP3，MP3/WAV/OGG 等直接透传；Dockerfile 安装 ffmpeg。④文件原名：此前文件下载丢失原始文件名；extractMedia 提取 file_item.file_name，Storage 新增 filename 列，媒体下载接口按 RFC 5987 设置 Content-Disposition，前端列表与详情均显示文件名。
 1.0.13：多媒体与体验大补（基于 v1.0.12 iLink AES-128-ECB 真实字节下载）。①表情包：修复接收端表情包（sticker）无法加载——前端此前只渲染 image，现与图片同链路渲染并增加加载失败兜底（占位+「媒体加载失败」提示）。②语音双态：原始语音不再丢失，saveVoiceFile 改用 decryptIlink 解密真实音频、按文件魔数识别真实后缀（amr/wav/mp3/flac）；列表与详情在文字下方折叠「🎧 听原文」语音条，点击即用 <audio> 播放。③关于页：设置新增「关于 ClawVault（爪匣）」模块，展示版本号、更新日志、开发者 planover、AGPL-3.0 协议与隐私政策入口（采用 ClawVault 真实信息）。④响应式：针对横竖屏切换/不同分辨率重构布局（Flexbox/Grid），修复按钮遮挡文本、卡片超出屏幕等重叠偏移；新增 ≤1100px 中段断点。⑤通道改名：新增重命名入口（≤20 字、特殊字符过滤），同步更新历史记录 media/voice 路径与通知。

@@ -53,6 +53,14 @@ export class Storage {
       CREATE INDEX IF NOT EXISTS idx_msgs_cat ON messages(category, sub);
       CREATE INDEX IF NOT EXISTS idx_msgs_ts ON messages(ts);
     `);
+    // 媒体去重表：同一通道内内容相同的文件只存一份，避免重复占用空间
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS media_hashes (
+        hash TEXT PRIMARY KEY,
+        rel TEXT NOT NULL,
+        channel_name TEXT NOT NULL
+      );
+    `);
     // 兼容旧库：补齐 kind / voice / media / filename 列
     for (const col of ['kind', 'voice', 'media', 'filename']) {
       try {
@@ -84,6 +92,11 @@ export class Storage {
       .slice(0, 60);
   }
 
+  // 媒体相对路径统一用正斜杠（与平台无关），保证落盘与迁移查找一致
+  static _posix(...parts) {
+    return parts.join('/');
+  }
+
   _relPath(channelName, category, sub) {
     const parts = [Storage.safe(channelName), Storage.safe(category)];
     if (sub) parts.push(Storage.safe(sub));
@@ -103,21 +116,13 @@ export class Storage {
     return `# ClawVault 对话归档\n\n- 时间：${t}\n- 通道：${channelName}\n- 对方：${peer || '我'}\n- 分类：${cat}\n\n---\n\n${text}\n`;
   }
 
-  // 保存一条消息：写 SQLite；非聊天类(图片/文件…)同时落盘 Markdown，聊天类(纯文本/语音)不落 Markdown
+  // 保存一条消息：写 SQLite；真正的媒体文件由 saveMedia 按类型落盘到 图片/文件/视频/语音 目录，
+  // 不再为每条消息生成 Markdown 卡片（用户需在飞牛文件管理器中直接预览原文件）。
+  // 聊天类(纯文本/语音)引用该通道的 聊天.xlsx。
   saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '', voice = '', media = '', filename = '' }) {
     const ts = Date.now();
     const chat = Storage.isChat(kind);
-    let fpath = '';
-    if (!chat) {
-      const rel = this._relPath(channelName, category, sub);
-      const dir = path.join(this.archiveRoot, rel);
-      fs.mkdirSync(dir, { recursive: true });
-      const fname = `${this._fileStamp(ts)}-${crypto.randomBytes(3).toString('hex')}.md`;
-      fpath = path.join(dir, fname);
-      fs.writeFileSync(fpath, this._md({ ts, channelName, peer, category, sub, text }));
-    } else {
-      fpath = this._chatFile(channelName); // 聊天类：引用该通道的 聊天.xlsx
-    }
+    const fpath = chat ? this._chatFile(channelName) : ''; // 非聊天类：path 留空，主文件由 saveMedia 落盘
 
     const info = {
       channel_id: channelId,
@@ -152,27 +157,116 @@ export class Storage {
     this.db.prepare('UPDATE messages SET media=? WHERE id=?').run(rel || '', id);
   }
 
-  // 重新分类：聊天类只更新 SQLite 索引（不移动 Markdown）；其他类搬 Markdown 文件
+  // 重新分类：媒体文件按类型固定落在 图片/文件/视频/语音 目录（由 kind 决定，不随语义分类移动），
+  // 因此非聊天类只需更新 SQLite 的 category/sub 标签；聊天类同理只更新索引。
   reclassify(id, category, sub = '') {
     const row = this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);
     if (!row) return null;
-    if (Storage.isChat(row.kind)) {
-      this.db.prepare('UPDATE messages SET category=?, sub=? WHERE id=?').run(category, sub, id);
-      return this.getMessage(id);
-    }
-    try {
-      fs.unlinkSync(row.path);
-    } catch {
-      /* 文件可能已不存在 */
-    }
-    const rel = this._relPath(row.channel_name, category, sub);
-    const dir = path.join(this.archiveRoot, rel);
-    fs.mkdirSync(dir, { recursive: true });
-    const fname = `${this._fileStamp(row.ts)}-${crypto.randomBytes(3).toString('hex')}.md`;
-    const fpath = path.join(dir, fname);
-    fs.writeFileSync(fpath, this._md({ ts: row.ts, channelName: row.channel_name, peer: row.peer, category, sub, text: row.text }));
-    this.db.prepare('UPDATE messages SET category=?, sub=?, path=? WHERE id=?').run(category, sub, fpath, id);
+    this.db.prepare('UPDATE messages SET category=?, sub=? WHERE id=?').run(category, sub, id);
     return this.getMessage(id);
+  }
+
+  // 旧数据迁移：把早期版本统一存到 [通道]/媒体/ 的真实文件，按类型移动到 图片/文件/视频/语音 目录，
+  // 并清理各分类目录遗留的 Markdown 卡片。幂等、可重复执行。返回迁移统计。
+  // 需在消息已入库（messages.media 指向旧 媒体/ 路径）后调用。
+  migrateOldMedia() {
+    const stats = { moved: 0, deduped: 0, cardsRemoved: 0, scanned: 0 };
+    if (!fs.existsSync(this.archiveRoot)) return stats;
+    for (const ch of fs.readdirSync(this.archiveRoot)) {
+      const chDir = path.join(this.archiveRoot, ch);
+      if (!fs.statSync(chDir).isDirectory()) continue;
+      const oldMediaDir = path.join(chDir, '媒体');
+      // 1) 迁移 媒体/ 下的真实文件
+      if (fs.existsSync(oldMediaDir) && fs.statSync(oldMediaDir).isDirectory()) {
+        for (const fname of fs.readdirSync(oldMediaDir)) {
+          const oldAbs = path.join(oldMediaDir, fname);
+          if (!fs.statSync(oldAbs).isFile()) continue;
+          stats.scanned += 1;
+          // 在 DB 中找指向该旧路径的消息（rel 用正斜杠，与落盘一致）
+          const rel = Storage._posix(ch, '媒体', fname);
+          const row = this.db.prepare('SELECT * FROM messages WHERE media=?').get(rel);
+          const kind = row?.kind || '';
+          // 去重：若同通道已有内容相同的文件，直接复用
+          let buf = null;
+          try {
+            buf = fs.readFileSync(oldAbs);
+          } catch {
+            continue;
+          }
+          const hash = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 32);
+          const dup = this._findDup(ch, hash);
+          if (dup) {
+            // 已存在相同文件：删除旧的，把 DB 指向复用文件
+            try {
+              fs.unlinkSync(oldAbs);
+            } catch {
+              /* ignore */
+            }
+            if (row) this.db.prepare('UPDATE messages SET media=? WHERE id=?').run(dup, row.id);
+            stats.deduped += 1;
+            continue;
+          }
+          const catDir = Storage.catDirForKind(kind);
+          const newDir = path.join(chDir, catDir);
+          fs.mkdirSync(newDir, { recursive: true });
+          const newAbs = this._uniquePath(newDir, fname);
+          try {
+            fs.renameSync(oldAbs, newAbs);
+          } catch {
+            // 跨设备 rename 失败时退回 copy+unlink
+            try {
+              fs.copyFileSync(oldAbs, newAbs);
+              fs.unlinkSync(oldAbs);
+            } catch {
+              continue;
+            }
+          }
+          const newRel = Storage._posix(ch, catDir, path.basename(newAbs));
+          this._recordHash(hash, newRel, ch);
+          if (row) this.db.prepare('UPDATE messages SET media=? WHERE id=?').run(newRel, row.id);
+          stats.moved += 1;
+        }
+        // 清理空的 媒体/ 目录
+        try {
+          if (fs.readdirSync(oldMediaDir).length === 0) fs.rmdirSync(oldMediaDir);
+        } catch {
+          /* ignore */
+        }
+      }
+      // 2) 删除遗留的 Markdown 卡片（早期每条消息一个 .md，已无意义）
+      this._removeLegacyCards(chDir, stats);
+    }
+    return stats;
+  }
+
+  // 删除目录树中遗留的 ClawVault Markdown 卡片（以固定标题开头），保留 聊天.xlsx 等非卡片文件
+  _removeLegacyCards(dir, stats) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const abs = path.join(dir, e.name);
+      try {
+        if (e.isDirectory()) {
+          this._removeLegacyCards(abs, stats);
+        } else if (e.isFile() && e.name.endsWith('.md')) {
+          try {
+            const head = fs.readFileSync(abs, 'utf8').slice(0, 40);
+            if (head.includes('ClawVault 对话归档')) {
+              fs.unlinkSync(abs);
+              stats.cardsRemoved += 1;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   getMessage(id) {
@@ -282,14 +376,84 @@ export class Storage {
     return file;
   }
 
-  // 保存图片 / 文件 / 视频 / 表情等媒体：下载 URL 或写入 buffer 到 [通道]/媒体/<id>.<ext>，
+  // 媒体类型 → 落盘目录（按类型而非语义分类，方便飞牛相册/文件管理器直接预览）
+  static catDirForKind(kind) {
+    switch (String(kind).toLowerCase()) {
+      case 'file':
+      case 'document':
+        return '文件';
+      case 'video':
+      case 'short_video':
+        return '视频';
+      case 'image':
+      case 'photo':
+      case 'picture':
+      case 'sticker':
+      case 'emoji':
+      case 'gif':
+        return '图片';
+      default:
+        return '媒体';
+    }
+  }
+
+  // 媒体文件名：文件类保留原始文件名（去扩展名），图片/视频类用消息文字摘要做后缀
+  _mediaBaseName({ kind, text, filename }) {
+    const stamp = this._fileStamp(Date.now());
+    if ((kind === 'file' || kind === 'document') && filename) {
+      const dot = filename.lastIndexOf('.');
+      const nameOnly = dot > 0 ? filename.slice(0, dot) : filename;
+      const s = Storage.safe(nameOnly).replace(/_+/g, '_').slice(0, 50);
+      return `${stamp}-${s || '文件'}`;
+    }
+    // 图片/视频：取文字摘要（去空白与标点，最多 16 字），无文字则回落「媒体」
+    const summary = String(text || '')
+      .replace(/[\s\p{P}\p{S}]+/gu, '')
+      .slice(0, 16);
+    const s = Storage.safe(summary || '媒体').replace(/_+/g, '_').slice(0, 50);
+    return `${stamp}-${s}`;
+  }
+
+  // 同目录内避免重名覆盖：已存在则在基名后追加 _1 _2 …
+  _uniquePath(dir, fname) {
+    let p = path.join(dir, fname);
+    if (!fs.existsSync(p)) return p;
+    const ext = path.extname(fname);
+    const base = fname.slice(0, -ext.length);
+    let i = 1;
+    do {
+      p = path.join(dir, `${base}_${i}${ext}`);
+      i += 1;
+    } while (fs.existsSync(p));
+    return p;
+  }
+
+  // 去重：同通道内内容相同的文件只存一份。返回已存在文件的相对路径（无则空串）
+  _findDup(channelName, hash) {
+    const row = this.db
+      .prepare('SELECT rel FROM media_hashes WHERE channel_name=? AND hash=?')
+      .get(channelName, hash);
+    if (row && fs.existsSync(path.resolve(this.archiveRoot, row.rel))) return row.rel;
+    return '';
+  }
+
+  _recordHash(hash, rel, channelName) {
+    try {
+      this.db
+        .prepare('INSERT OR REPLACE INTO media_hashes (hash, rel, channel_name) VALUES (?,?,?)')
+        .run(hash, rel, channelName);
+    } catch {
+      /* 去重表写入失败不影响主流程 */
+    }
+  }
+
+  // 保存图片 / 文件 / 视频 / 表情等媒体：按类型落盘到 [通道]/<类型目录>/<可读名>.<ext>，
+  // 内容去重（同通道 SHA-256 相同则复用已存文件，不重复占用空间）。
   // 返回相对归档根路径（下载/解析失败则记录日志并返回空串，不阻断主流程）。
   // media: { url?: string, buffer?: Buffer, ext?: string, aesKey?: string }
   // 若带 aesKey（iLink 加密媒体），下载/写入后做 AES-128-ECB 解密，并按真实文件头判定扩展名。
-  async saveMedia({ channelName, id, media }) {
+  async saveMedia({ channelName, id, media, kind = '', text = '' }) {
     if (!media) return '';
-    const dir = path.join(this.archiveRoot, Storage.safe(channelName), '媒体');
-    fs.mkdirSync(dir, { recursive: true });
     try {
       let buf;
       if (media.buffer) {
@@ -305,6 +469,11 @@ export class Storage {
       if (media.aesKey && !isMediaHeader(buf)) {
         buf = decryptIlink(buf, media.aesKey);
       }
+      // 去重：同通道内内容相同的文件只存一份
+      const hash = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 32);
+      const dup = this._findDup(channelName, hash);
+      if (dup) return dup;
+
       // 扩展名：优先用解密后真实文件头判定，其次回落 media.ext / URL 后缀
       const urlPath = media.url ? media.url.split('?')[0] : '';
       const ext =
@@ -313,10 +482,15 @@ export class Storage {
         (urlPath && path.extname(urlPath).slice(1)) ||
         'bin';
       const safeExt = String(ext).replace(/[^\w]/g, '').slice(0, 8) || 'bin';
-      const fname = `${id}-${crypto.randomBytes(3).toString('hex')}.${safeExt}`;
-      const fpath = path.join(dir, fname);
+      const base = this._mediaBaseName({ kind, text, filename: media.filename });
+      const catDir = Storage.catDirForKind(kind);
+      const dir = path.join(this.archiveRoot, Storage.safe(channelName), catDir);
+      fs.mkdirSync(dir, { recursive: true });
+      const fpath = this._uniquePath(dir, `${base}.${safeExt}`);
       fs.writeFileSync(fpath, buf);
-      return path.join(Storage.safe(channelName), '媒体', fname);
+      const rel = Storage._posix(Storage.safe(channelName), catDir, path.basename(fpath));
+      this._recordHash(hash, rel, channelName);
+      return rel;
     } catch (e) {
       console.error('[ClawVault] 媒体落盘失败:', e?.message || e);
       return '';
