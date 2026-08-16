@@ -2,6 +2,9 @@
 // 协议细节来自腾讯官方开放实现（openclaw-weixin / weixin-ClawBot-API）：
 // 接入域名 ilinkai.weixin.qq.com，需携带 ilink_bot_token 与 X-WECHAT-UIN。
 import QRCode from 'qrcode';
+import fs from 'node:fs';
+import path from 'node:path';
+import config from '../config.js';
 import { getQRCode, getQRCodeStatus, getUpdates, sendMessage } from '../ilink/protocol.js';
 import { Provider } from './base.js';
 
@@ -9,7 +12,7 @@ const SESSION_MS = 24 * 3600 * 1000;
 const RECONNECT_AT = SESSION_MS * 0.92; // 到期前 8% 自动生成新二维码
 
 // 从 iLink 原始消息推断平台消息类型（供"优先用平台类型归类、减少 AI"使用）
-function wechatKind(msg) {
+export function wechatKind(msg) {
   const item = msg.item_list?.[0];
   if (!item) return 'text';
   if (item.image_item) return 'image';
@@ -26,7 +29,7 @@ function wechatKind(msg) {
 // iLink 协议字段名可能随版本变化，这里做尽量宽松的兼容：
 //   image_item.{image_url,cdn_url,url,file_url} / video_item.* / file_item|file.* / voice_item.{voice_url,url}
 // 返回 { url, ext } 或 null（纯文本 / 无可用地址时）。
-function extractMedia(msg, kind) {
+export function extractMedia(msg, kind) {
   const item = msg.item_list?.[0] || {};
   let m = null;
   if (kind === 'image') m = item.image_item || {};
@@ -34,10 +37,24 @@ function extractMedia(msg, kind) {
   else if (kind === 'file') m = item.file_item || item.file || {};
   else if (kind === 'voice') m = item.voice_item || {};
   if (!m) return null;
-  const url = m.image_url || m.cdn_url || m.url || m.file_url || m.video_url || m.voice_url || (typeof m === 'string' ? m : null);
+  const url = m.image_url || m.cdn_url || m.url || m.file_url || m.video_url || m.voice_url || m.thumb_url || (typeof m === 'string' ? m : null);
   if (!url) return null;
   const ext = (m.ext || (url.split('?')[0].split('.').pop() || 'bin')).slice(0, 6).replace(/[^\w]/g, '');
   return { url, ext };
+}
+
+// 诊断：图片/视频/文件/表情消息取不到直链下载地址时，把原始 item 记录到日志，
+// 用于在真机拿到 iLink 真实媒体字段结构（image_id/aes_key/cdn…）以补齐字节下载。
+const MEDIA_KINDS = ['image', 'video', 'file', 'sticker'];
+function diagRawMedia(msg, kind) {
+  if (!config?.dataDir) return;
+  try {
+    const f = path.join(config.dataDir, 'clawvault-media-debug.log');
+    const entry = { ts: new Date().toISOString(), kind, from: msg.from_user_id, item: msg.item_list?.[0] };
+    fs.appendFileSync(f, JSON.stringify(entry) + '\n');
+  } catch {
+    /* 诊断日志失败不影响主流程 */
+  }
 }
 
 export class WeChatIlinkProvider extends Provider {
@@ -133,8 +150,13 @@ export class WeChatIlinkProvider extends Provider {
             }
             // 提取图片/视频/文件/语音媒体地址（用于落盘与前端展示）
             const media = extractMedia(msg, kind);
-            // 纯文本无内容、语音又无转写时跳过（避免空行）
-            if (!text && kind !== 'voice') continue;
+            // 无法提取直链时记录原始 item，便于后续实现真实下载
+            if (MEDIA_KINDS.includes(kind) && !(media && media.url)) {
+              diagRawMedia(msg, kind);
+            }
+            // 纯文本无内容、且既非语音也无可提取媒体时跳过（避免空行）
+            // 注意：图片/视频/文件即使没有文本也必须保留，否则消息被静默丢弃
+            if (!text && kind !== 'voice' && !media) continue;
             await this.channel.deliver({
               peer: msg.from_user_id,
               text,
