@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: ['20', '22']
+        node-version: ['22', '24']
     steps:
       - uses: actions/checkout@v4
 
@@ -19,10 +19,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: app/backend/package-lock.json
 
       - name: Install backend dependencies
         working-directory: app/backend
-        run: npm install --no-audit --no-fund
+        run: |
+          # npm ci is deterministic and avoids the "Exit handler never called"
+          # transient crashes seen with npm install on deprecated Node 20 runners.
+          for i in 1 2 3; do
+            npm ci --no-audit --no-fund && break
+            echo "npm ci attempt $i failed, retrying..."
+            sleep 5
+          done
 
       - name: Run tests
         working-directory: app/backend
