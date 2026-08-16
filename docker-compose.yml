@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: clawvault:1.0.9
+    image: clawvault:1.0.10
     container_name: ClawVault
     restart: unless-stopped
     ports:

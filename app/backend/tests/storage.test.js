@@ -171,3 +171,18 @@ test('stats：总数/按类型/按分类/媒体缺口统计正确', ser, () => {
   assert.ok(s.byCategory.find((c) => c.category === '图片' && c.count === 2));
 });
 
+test('listMessages：kind 类型筛选生效', ser, () => {
+  const s3 = new Storage({ dataDir: path.join(tmp, 'kind-data'), archiveRoot: path.join(tmp, 'kind-archive') });
+  s3.saveMessage({ channelId: 'c1', channelName: '通道K', peer: 'u', text: 't1', kind: 'text', category: '工作' });
+  s3.saveMessage({ channelId: 'c1', channelName: '通道K', peer: 'u', text: 'i1', kind: 'image', category: '图片', media: 'x.png' });
+  s3.saveMessage({ channelId: 'c1', channelName: '通道K', peer: 'u', text: 'v1', kind: 'voice', category: '待分类' });
+  const all = s3.listMessages({});
+  assert.equal(all.total, 3);
+  const images = s3.listMessages({ kind: 'image' });
+  assert.equal(images.total, 1);
+  assert.equal(images.items[0].kind, 'image');
+  const noImage = s3.listMessages({ kind: 'voice' });
+  assert.equal(noImage.total, 1);
+  assert.equal(noImage.items[0].kind, 'voice');
+});
+

@@ -319,8 +319,8 @@ export class Storage {
     return out;
   }
 
-  // 列表查询（支持通道/分类/子分类/搜索过滤 + 分页）
-  listMessages({ channelId, category, sub, q, limit = 50, offset = 0 } = {}) {
+  // 列表查询（支持通道/分类/子分类/类型/搜索过滤 + 分页）
+  listMessages({ channelId, category, sub, kind, q, limit = 50, offset = 0 } = {}) {
     const where = [];
     const params = {};
     if (channelId) {
@@ -334,6 +334,10 @@ export class Storage {
     if (sub !== undefined && sub !== null) {
       where.push('sub = @sub');
       params.sub = sub;
+    }
+    if (kind) {
+      where.push('kind = @kind');
+      params.kind = kind;
     }
     if (q) {
       where.push('text LIKE @q');

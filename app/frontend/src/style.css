@@ -1,3 +1,24 @@
+:root {
+  --c-primary: #2563eb;
+  --c-primary-700: #1d4ed8;
+  --c-primary-50: #eff6ff;
+  --c-primary-100: #dbeafe;
+  --c-bg: #f5f6f8;
+  --c-surface: #ffffff;
+  --c-border: #e5e7eb;
+  --c-border-strong: #d0d5dd;
+  --c-text: #1f2329;
+  --c-text-2: #4b5563;
+  --c-muted: #6b7280; /* 对比度 ~4.6:1，满足 WCAG 2.2 AA 正文要求 */
+  --c-success-bg: #dcfce7;
+  --c-success-text: #15803d;
+  --c-warn-bg: #fef3c7;
+  --c-warn-text: #b45309;
+  --radius: 10px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -7,8 +28,8 @@ body {
   padding: 0;
   height: 100%;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: #f5f6f8;
-  color: #1f2329;
+  background: var(--c-bg);
+  color: var(--c-text);
 }
 #app {
   height: 100vh;
@@ -19,18 +40,25 @@ button {
 }
 .btn {
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 7px 14px;
-  background: #2563eb;
+  background: var(--c-primary);
   color: #fff;
   font-size: 13px;
+  transition: background 0.15s, transform 0.12s;
 }
 .btn:hover {
-  background: #1d4ed8;
+  background: var(--c-primary-700);
+}
+.btn:active {
+  transform: scale(0.97);
 }
 .btn.ghost {
-  background: #eef2ff;
-  color: #2563eb;
+  background: var(--c-primary-50);
+  color: var(--c-primary);
+}
+.btn.ghost:hover {
+  background: var(--c-primary-100);
 }
 .btn.danger {
   background: #ef4444;
@@ -38,17 +66,22 @@ button {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 .input {
-  border: 1px solid #d0d5dd;
-  border-radius: 6px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-sm);
   padding: 7px 10px;
   font-size: 13px;
   width: 100%;
   outline: none;
+  background: var(--c-surface);
+  color: var(--c-text);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .input:focus {
-  border-color: #2563eb;
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px var(--c-primary-100);
 }
 .modal-mask {
   position: fixed;
@@ -60,13 +93,14 @@ button {
   z-index: 50;
 }
 .modal {
-  background: #fff;
-  border-radius: 10px;
+  background: var(--c-surface);
+  border-radius: var(--radius);
   width: 520px;
   max-width: 92vw;
   max-height: 86vh;
   overflow: auto;
   padding: 20px;
+  box-shadow: var(--shadow);
 }
 .modal h3 {
   margin: 0 0 14px;
@@ -85,9 +119,15 @@ button {
   padding: 1px 8px;
   border-radius: 10px;
   font-size: 12px;
-  background: #eef2ff;
-  color: #2563eb;
+  background: var(--c-primary-50);
+  color: var(--c-primary);
 }
 .muted {
-  color: #8a9099;
+  color: var(--c-muted);
+}
+
+/* 统一焦点可见性（键盘无障碍） */
+:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
 }

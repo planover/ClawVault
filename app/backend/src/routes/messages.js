@@ -4,7 +4,7 @@ export default function createMessagesRouter({ storage, ws }) {
   const r = Router();
 
   r.get('/', (req, res) => {
-    const { channelId, category, sub, q, limit, offset } = req.query;
+    const { channelId, category, sub, kind, q, limit, offset } = req.query;
     res.json(
       storage.listMessages({
         channelId,

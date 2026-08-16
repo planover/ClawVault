@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { api, connectWS } from './api.js';
 import FolderTree from './components/FolderTree.vue';
 import MessageList from './components/MessageList.vue';
@@ -10,7 +10,7 @@ const channels = ref([]);
 const folders = ref([]);
 const chats = ref([]);
 const messages = ref([]);
-const filter = ref({ channelName: '', category: '', sub: '' });
+const filter = reactive({ channelName: '', category: '', sub: '', kind: '', q: '' });
 const selectedId = ref(null);
 const selectedMessage = ref(null);
 const showChannels = ref(false);
@@ -18,9 +18,133 @@ const showSettings = ref(false);
 const newCat = ref('');
 const newSub = ref('');
 
+const loading = ref(false);
+const loadingMore = ref(false);
+const total = ref(0);
+const limit = 30;
+const offset = ref(0);
+
+const showSide = ref(false); // 移动端侧栏抽屉
+const showDetail = ref(false); // 移动端详情覆盖层
+
+const KIND_LABELS = [
+  { value: '', label: '全部' },
+  { value: 'text', label: '文本' },
+  { value: 'voice', label: '语音' },
+  { value: 'image', label: '图片' },
+  { value: 'video', label: '视频' },
+  { value: 'file', label: '文件' },
+];
+
+const hasMore = computed(() => messages.value.length < total.value);
+
+const emptyText = computed(() => {
+  if (filter.q) return `未找到包含「${filter.q}」的消息`;
+  if (filter.kind) return `该类型下暂无消息`;
+  return '该分类下暂无消息';
+});
+
 function channelIdByName(name) {
   const c = channels.value.find((c) => c.name === name);
   return c ? c.id : '';
+}
+
+async function loadMessages(reset = true) {
+  if (reset) {
+    offset.value = 0;
+    loading.value = true;
+  } else {
+    loadingMore.value = true;
+  }
+  const q = {};
+  const cid = channelIdByName(filter.channelName);
+  if (cid) q.channelId = cid;
+  if (filter.category) q.category = filter.category;
+  if (filter.sub) q.sub = filter.sub;
+  if (filter.kind) q.kind = filter.kind;
+  if (filter.q) q.q = filter.q;
+  q.limit = limit;
+  q.offset = offset.value;
+  try {
+    const r = await api.listMessages(q);
+    total.value = r.total;
+    messages.value = reset ? r.items : messages.value.concat(r.items);
+  } finally {
+    loading.value = false;
+    loadingMore.value = false;
+  }
+}
+
+async function onSelectFilter(f) {
+  filter.channelName = f.channelName || '';
+  filter.category = f.category || '';
+  filter.sub = f.sub || '';
+  filter.kind = '';
+  filter.q = '';
+  selectedId.value = null;
+  selectedMessage.value = null;
+  showSide.value = false;
+  await loadMessages(true);
+}
+
+let searchTimer = null;
+function onSearchInput(e) {
+  filter.q = e.target.value;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    selectedId.value = null;
+    selectedMessage.value = null;
+    loadMessages(true);
+  }, 300);
+}
+
+function onSelectKind(k) {
+  filter.kind = k;
+  selectedId.value = null;
+  selectedMessage.value = null;
+  loadMessages(true);
+}
+
+function loadMore() {
+  offset.value += limit;
+  loadMessages(false);
+}
+
+function onSelectMessage(id) {
+  selectedId.value = id;
+  selectedMessage.value = messages.value.find((m) => m.id === id) || null;
+  newCat.value = selectedMessage.value?.category || '';
+  newSub.value = selectedMessage.value?.sub || '';
+  showDetail.value = true;
+}
+function closeDetail() {
+  showDetail.value = false;
+}
+function toggleSide() {
+  showSide.value = !showSide.value;
+}
+
+async function doReclassify() {
+  if (!selectedMessage.value || !newCat.value) return;
+  await api.reclassify(selectedMessage.value.id, newCat.value, newSub.value);
+  selectedMessage.value = { ...selectedMessage.value, category: newCat.value, sub: newSub.value };
+  await loadMessages(true);
+  await loadFolders();
+}
+
+function onWSEvent(e) {
+  if (e.type === 'message' || e.type === 'reclassify') {
+    loadMessages(true);
+    loadFolders();
+    loadChats();
+    if (e.type === 'reclassify' && selectedMessage.value && e.record.id === selectedMessage.value.id) {
+      selectedMessage.value = e.record;
+      newCat.value = e.record.category;
+      newSub.value = e.record.sub;
+    }
+  } else if (e.type === 'channels') {
+    channels.value = e.channels;
+  }
 }
 
 async function loadChannels() {
@@ -36,56 +160,12 @@ async function loadChats() {
 async function loadFolders() {
   folders.value = await api.folders();
 }
-async function loadMessages() {
-  const q = {};
-  const cid = channelIdByName(filter.value.channelName);
-  if (cid) q.channelId = cid;
-  if (filter.value.category) q.category = filter.value.category;
-  if (filter.value.sub) q.sub = filter.value.sub;
-  const r = await api.listMessages(q);
-  messages.value = r.items;
-}
-
-async function onSelectFilter(f) {
-  filter.value = f;
-  selectedId.value = null;
-  selectedMessage.value = null;
-  await loadMessages();
-}
-function onSelectMessage(id) {
-  selectedId.value = id;
-  selectedMessage.value = messages.value.find((m) => m.id === id) || null;
-  newCat.value = selectedMessage.value?.category || '';
-  newSub.value = selectedMessage.value?.sub || '';
-}
-async function doReclassify() {
-  if (!selectedMessage.value || !newCat.value) return;
-  await api.reclassify(selectedMessage.value.id, newCat.value, newSub.value);
-  selectedMessage.value = { ...selectedMessage.value, category: newCat.value, sub: newSub.value };
-  await loadMessages();
-  await loadFolders();
-}
-
-function onWSEvent(e) {
-  if (e.type === 'message' || e.type === 'reclassify') {
-    loadMessages();
-    loadFolders();
-    loadChats();
-    if (e.type === 'reclassify' && selectedMessage.value && e.record.id === selectedMessage.value.id) {
-      selectedMessage.value = e.record;
-      newCat.value = e.record.category;
-      newSub.value = e.record.sub;
-    }
-  } else if (e.type === 'channels') {
-    channels.value = e.channels;
-  }
-}
 
 onMounted(() => {
   loadChannels();
   loadFolders();
   loadChats();
-  loadMessages();
+  loadMessages(true);
   connectWS(onWSEvent);
 });
 </script>
@@ -93,19 +173,23 @@ onMounted(() => {
 <template>
   <div class="app">
     <header class="top">
+      <button class="icon-btn hamburger" aria-label="打开目录" @click="toggleSide">☰</button>
       <div class="brand">🐾 ClawVault <span class="muted">爪匣</span></div>
       <div class="spacer"></div>
-      <button class="btn ghost" @click="showChannels = true">通道管理 ({{ channels.length }})</button>
-      <button class="btn ghost" @click="showSettings = true">设置</button>
+      <button class="btn ghost" aria-label="通道管理" @click="showChannels = true">通道 ({{ channels.length }})</button>
+      <button class="btn ghost" aria-label="设置" @click="showSettings = true">设置</button>
     </header>
 
     <div class="body">
-      <aside class="side">
+      <!-- 移动端侧栏遮罩 -->
+      <div v-if="showSide" class="side-mask" @click="showSide = false"></div>
+
+      <aside class="side" :class="{ open: showSide }">
         <div class="side-sec">
           <div class="side-title">聊天归档</div>
           <div v-for="c in chats" :key="c.channel" class="chat-row">
             <span class="chat-name">💬 {{ c.channel }}</span>
-            <a class="chat-dl" :href="c.downloadUrl" :download="`${c.channel}-聊天.xlsx`">⬇️ 聊天.xlsx</a>
+            <a class="chat-dl" :href="c.downloadUrl" :download="`${c.channel}-聊天.xlsx`">⬇️ xlsx</a>
             <span v-if="c.hasVoice" title="含语音">🎧</span>
             <span class="muted small">{{ c.rows }} 行</span>
           </div>
@@ -115,10 +199,53 @@ onMounted(() => {
       </aside>
 
       <main class="main">
-        <MessageList :messages="messages" :selectedId="selectedId" @select="onSelectMessage" />
+        <div class="toolbar">
+          <div class="search">
+            <span class="search-ico" aria-hidden="true">🔍</span>
+            <input
+              class="input search-input"
+              type="search"
+              :value="filter.q"
+              @input="onSearchInput"
+              aria-label="搜索消息内容"
+              placeholder="搜索消息内容…"
+            />
+          </div>
+          <div class="chips" role="group" aria-label="按类型筛选">
+            <button
+              v-for="k in KIND_LABELS"
+              :key="k.value"
+              class="chip"
+              :class="{ active: filter.kind === k.value }"
+              :aria-pressed="filter.kind === k.value"
+              @click="onSelectKind(k.value)"
+            >
+              {{ k.label }}
+            </button>
+          </div>
+          <div class="count muted small">共 {{ total }} 条</div>
+        </div>
+
+        <div class="list-wrap">
+          <div v-if="loading" class="loader" role="status" aria-live="polite">
+            <span class="spinner" aria-hidden="true"></span> 加载中…
+          </div>
+          <MessageList
+            v-else
+            :messages="messages"
+            :selectedId="selectedId"
+            :emptyText="emptyText"
+            @select="onSelectMessage"
+          />
+          <button v-if="hasMore && !loading" class="btn ghost more" :disabled="loadingMore" @click="loadMore">
+            {{ loadingMore ? '加载中…' : '加载更多' }}
+          </button>
+        </div>
       </main>
 
-      <section class="detail" v-if="selectedMessage">
+      <!-- 桌面端：右侧栏；移动端：全屏覆盖层 -->
+      <section class="detail" :class="{ open: showDetail }" v-if="selectedMessage">
+        <button class="icon-btn detail-close" aria-label="关闭详情" @click="closeDetail">✕</button>
         <div class="meta">
           <span class="tag">{{ selectedMessage.category }}<template v-if="selectedMessage.sub"> / {{ selectedMessage.sub }}</template></span>
           <span class="muted">{{ selectedMessage.channelName }} · {{ new Date(selectedMessage.ts).toLocaleString('zh-CN') }}</span>
@@ -152,7 +279,7 @@ onMounted(() => {
           </div>
         </div>
       </section>
-      <section class="detail empty" v-else>
+      <section class="detail empty" :class="{ open: showDetail }" v-else>
         <div class="muted">选择左侧分类或消息查看详情</div>
       </section>
     </div>
@@ -174,8 +301,10 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   padding: 0 16px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-border);
+  box-shadow: var(--shadow);
+  z-index: 30;
 }
 .brand {
   font-weight: 700;
@@ -187,23 +316,88 @@ onMounted(() => {
   overflow: hidden;
 }
 .side {
-  width: 240px;
-  border-right: 1px solid #e5e7eb;
-  background: #fff;
+  width: 244px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--c-border);
+  background: var(--c-surface);
   overflow: auto;
   padding: 10px;
 }
 .main {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  background: #fff;
-  border-right: 1px solid #e5e7eb;
+  background: var(--c-surface);
+  border-right: 1px solid var(--c-border);
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-surface);
+  flex-wrap: wrap;
+}
+.search {
+  position: relative;
+  flex: 1;
+  min-width: 180px;
+}
+.search-ico {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  opacity: 0.6;
+  pointer-events: none;
+}
+.search-input {
+  padding-left: 30px;
+}
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chip {
+  border: 1px solid var(--c-border-strong);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.chip:hover {
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+}
+.chip.active {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: #fff;
+}
+.count {
+  white-space: nowrap;
+}
+.list-wrap {
+  flex: 1;
+  overflow: auto;
+}
+.more {
+  display: block;
+  margin: 14px auto 20px;
 }
 .detail {
   width: 340px;
+  flex-shrink: 0;
   padding: 16px;
   overflow: auto;
-  background: #fafbfc;
+  background: var(--c-bg);
+  position: relative;
 }
 .detail.empty {
   display: flex;
@@ -220,28 +414,28 @@ onMounted(() => {
   white-space: pre-wrap;
   font-size: 14px;
   line-height: 1.6;
-  color: #1f2329;
+  color: var(--c-text);
 }
 .reclass {
   margin-top: 20px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--c-border);
   padding-top: 12px;
 }
 .reclass h4 {
   margin: 0 0 8px;
 }
 .muted {
-  color: #8a9099;
+  color: var(--c-muted);
 }
 .side-sec {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--c-border);
   padding: 10px 10px 12px;
   margin-bottom: 6px;
 }
 .side-title {
   font-size: 12px;
   font-weight: 600;
-  color: #4b5563;
+  color: var(--c-text-2);
   margin-bottom: 6px;
 }
 .chat-row {
@@ -255,7 +449,7 @@ onMounted(() => {
   font-weight: 500;
 }
 .chat-dl {
-  color: #2563eb;
+  color: var(--c-primary);
   text-decoration: none;
   font-size: 12px;
 }
@@ -264,7 +458,7 @@ onMounted(() => {
 }
 .voice {
   margin-top: 14px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--c-border);
   padding-top: 12px;
 }
 .voice audio {
@@ -273,13 +467,117 @@ onMounted(() => {
 }
 .media {
   margin-top: 14px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--c-border);
   padding-top: 12px;
 }
 .media img,
 .media video {
   max-width: 100%;
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--c-border);
+}
+
+/* 加载态 */
+.loader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--c-muted);
+  font-size: 13px;
+}
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--c-border-strong);
+  border-top-color: var(--c-primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 通用按钮焦点态（无障碍） */
+:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+.icon-btn {
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: var(--c-text-2);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.icon-btn:hover {
+  background: var(--c-primary-50);
+}
+.hamburger {
+  display: none;
+}
+.detail-close {
+  display: none;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+/* 移动端响应式：≤768px 折叠为单栏 */
+@media (max-width: 768px) {
+  .hamburger {
+    display: inline-flex;
+  }
+  .side {
+    position: fixed;
+    left: 0;
+    top: 52px;
+    bottom: 0;
+    z-index: 40;
+    width: 78vw;
+    max-width: 300px;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 2px 0 12px rgba(16, 24, 40, 0.12);
+  }
+  .side.open {
+    transform: translateX(0);
+  }
+  .side-mask {
+    position: fixed;
+    inset: 52px 0 0 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 35;
+  }
+  .main {
+    border-right: none;
+  }
+  .detail {
+    position: fixed;
+    inset: 52px 0 0 0;
+    width: auto;
+    z-index: 45;
+    background: var(--c-surface);
+    transform: translateX(100%);
+    transition: transform 0.22s ease;
+  }
+  .detail.open {
+    transform: translateX(0);
+  }
+  .detail-close {
+    display: inline-flex;
+  }
+  .detail.empty {
+    display: none;
+  }
+  .toolbar {
+    gap: 8px;
+  }
 }
 </style>
