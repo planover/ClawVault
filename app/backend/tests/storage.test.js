@@ -119,3 +119,55 @@ test('appendChatRow 并发写入同一通道不丢行（串行队列）', ser, a
   await wb.xlsx.readFile(storage._chatFile('通道Q'));
   assert.equal(wb.worksheets[0].rowCount, 1 + N, '表头 + N 行应全部保留');
 });
+
+test('saveMessage 携带 media 字段；setMedia 可回填', ser, () => {
+  const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道G', peer: 'u8', text: '图', kind: 'image', category: '图片', media: '通道G/媒体/x.png' });
+  assert.equal(rec.media, '通道G/媒体/x.png');
+  assert.equal(storage.getMessage(rec.id).media, '通道G/媒体/x.png');
+  storage.setMedia(rec.id, '通道G/媒体/y.png');
+  assert.equal(storage.getMessage(rec.id).media, '通道G/媒体/y.png');
+});
+
+test('saveMedia：buffer 写入媒体并返回相对路径', ser, async () => {
+  const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道H', peer: 'u9', text: '图', kind: 'image', category: '图片' });
+  const rel = await storage.saveMedia({ channelName: '通道H', id: rec.id, media: { buffer: Buffer.from('IMGDATA'), ext: 'png' } });
+  assert.ok(rel, '应返回相对路径');
+  assert.match(rel, /媒体[\\/].*\.png$/);
+  assert.equal(fs.readFileSync(path.join(archiveRoot, rel), 'utf8'), 'IMGDATA');
+});
+
+test('saveMedia：URL 下载（mock fetch）写入媒体', ser, async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(Buffer.from('URLDATA'), { status: 200 });
+  try {
+    const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道I', peer: 'u10', text: '图', kind: 'image', category: '图片' });
+    const rel = await storage.saveMedia({ channelName: '通道I', id: rec.id, media: { url: 'https://example.com/a.jpg', ext: 'jpg' } });
+    assert.ok(rel && rel.endsWith('.jpg'), '应按扩展名落盘');
+    assert.equal(fs.readFileSync(path.join(archiveRoot, rel), 'utf8'), 'URLDATA');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('saveMedia：无 media 返回空串', ser, async () => {
+  assert.equal(await storage.saveMedia({ channelName: '通道H', id: 1, media: null }), '');
+});
+
+test('stats：总数/按类型/按分类/媒体缺口统计正确', ser, () => {
+  // 用独立 Storage 实例，避免与上方用例共享计数
+  const s2 = new Storage({ dataDir: path.join(tmp, 'stats-data'), archiveRoot: path.join(tmp, 'stats-archive') });
+  s2.saveMessage({ channelId: 'c1', channelName: '通道J', peer: 'u', text: '有图', kind: 'image', category: '图片', media: '通道J/媒体/a.png' });
+  s2.saveMessage({ channelId: 'c1', channelName: '通道J', peer: 'u', text: '无图', kind: 'image', category: '图片' });
+  s2.saveMessage({ channelId: 'c1', channelName: '通道J', peer: 'u', text: '视频', kind: 'video', category: '视频' });
+  s2.saveMessage({ channelId: 'c1', channelName: '通道J', peer: 'u', text: '文本', kind: 'text', category: '工作' });
+  const s = s2.stats();
+  assert.equal(s.total, 4);
+  assert.equal(s.byKind.image, 2);
+  assert.equal(s.byKind.video, 1);
+  assert.equal(s.byKind.text, 1);
+  // 缺媒体：image(无图) + video = 2；带媒体的 image 不计入
+  assert.equal(s.mediaGaps, 2);
+  assert.equal(s.mediaStored, 1);
+  assert.ok(s.byCategory.find((c) => c.category === '图片' && c.count === 2));
+});
+

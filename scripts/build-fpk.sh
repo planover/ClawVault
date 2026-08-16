@@ -66,14 +66,16 @@ if [ "${1:-}" = "--check" ]; then
   mkdir -p "$SIM"
   # 模拟 fnOS 第一步：解外层 fpk 到 ${TRIM_APPDEST}
   tar -xzf "$FPK" -C "$SIM"
-  # 模拟 fnOS 第二步：解 app.tgz 到 ${TRIM_APPDEST}/app/
-  mkdir -p "$SIM/app"
-  tar -xzf "$SIM/app.tgz" -C "$SIM/app"
+  # 模拟 fnOS 第二步：解 app.tgz 直接铺平到 ${TRIM_APPDEST}（注意：无 app/ 中间层！）
+  # v1.0.9 实测 fnOS 把 app.tgz 内容直接铺平到应用根，cmd/main 用的是 ${TRIM_APPDEST}/docker/...
+  mkdir -p "$SIM"
+  tar -xzf "$SIM/app.tgz" -C "$SIM"
   ok=1
+  # 注意这里的路径都是"铺平后"的（无 app/ 前缀）
   for p in \
     manifest cmd/main config/privilege config/resource wizard/install \
-    app/backend/src/index.js app/backend/LICENSE app/frontend/src/App.vue app/ui/config \
-    app/docker/docker-compose.yaml app/docker/Dockerfile; do
+    backend/src/index.js backend/src/routes/health.js frontend/src/App.vue ui/config \
+    docker/docker-compose.yaml docker/Dockerfile; do
     if [ ! -e "$SIM/$p" ]; then echo "    ✗ 缺失 $p"; ok=0; fi
   done
   # LICENSE 不应在外层根目录（避免触发 fnOS 自动英文协议步骤）
@@ -84,7 +86,7 @@ if [ "${1:-}" = "--check" ]; then
   for f in "$SIM/cmd/main"; do
     if [ ! -x "$f" ]; then echo "    ✗ 无执行位 $f"; ok=0; fi
   done
-  if [ "$ok" = "1" ]; then echo "    ✓ 安装布局校验通过"; else rm -rf "$SIM" 2>/dev/null || true; exit 1; fi
+  if [ "$ok" = "1" ]; then echo "    ✓ 安装布局校验通过（铺平布局）"; else rm -rf "$SIM" 2>/dev/null || true; exit 1; fi
   rm -rf "$SIM" 2>/dev/null || true
 fi
 

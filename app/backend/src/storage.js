@@ -33,8 +33,8 @@ export class Storage {
       CREATE INDEX IF NOT EXISTS idx_msgs_cat ON messages(category, sub);
       CREATE INDEX IF NOT EXISTS idx_msgs_ts ON messages(ts);
     `);
-    // 兼容旧库：补齐 kind / voice 列
-    for (const col of ['kind', 'voice']) {
+    // 兼容旧库：补齐 kind / voice / media 列
+    for (const col of ['kind', 'voice', 'media']) {
       try {
         this.db.exec(`ALTER TABLE messages ADD COLUMN ${col} TEXT`);
       } catch {
@@ -84,7 +84,7 @@ export class Storage {
   }
 
   // 保存一条消息：写 SQLite；非聊天类(图片/文件…)同时落盘 Markdown，聊天类(纯文本/语音)不落 Markdown
-  saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '', voice = '' }) {
+  saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '', voice = '', media = '' }) {
     const ts = Date.now();
     const chat = Storage.isChat(kind);
     let fpath = '';
@@ -110,11 +110,12 @@ export class Storage {
       kind,
       path: fpath,
       voice: voice || '',
+      media: media || '',
       created_at: ts,
     };
     const r = this.db
       .prepare(
-        'INSERT INTO messages (channel_id, channel_name, peer, ts, category, sub, text, kind, path, voice, created_at) VALUES (@channel_id, @channel_name, @peer, @ts, @category, @sub, @text, @kind, @path, @voice, @created_at)',
+        'INSERT INTO messages (channel_id, channel_name, peer, ts, category, sub, text, kind, path, voice, media, created_at) VALUES (@channel_id, @channel_name, @peer, @ts, @category, @sub, @text, @kind, @path, @voice, @media, @created_at)',
       )
       .run(info);
     return { id: Number(r.lastInsertRowid), ...info };
@@ -123,6 +124,11 @@ export class Storage {
   // 聊天类消息的语音音频相对路径（用于 Web 播放/下载），在音频落盘后回填
   setVoice(id, rel) {
     this.db.prepare('UPDATE messages SET voice=? WHERE id=?').run(rel || '', id);
+  }
+
+  // 媒体（图片/文件/视频/表情）相对路径回填，落盘后调用
+  setMedia(id, rel) {
+    this.db.prepare('UPDATE messages SET media=? WHERE id=?').run(rel || '', id);
   }
 
   // 重新分类：聊天类只更新 SQLite 索引（不移动 Markdown）；其他类搬 Markdown 文件
@@ -229,6 +235,37 @@ export class Storage {
     return file;
   }
 
+  // 保存图片 / 文件 / 视频 / 表情等媒体：下载 URL 或写入 buffer 到 [通道]/媒体/<id>.<ext>，
+  // 返回相对归档根路径（下载/解析失败则记录日志并返回空串，不阻断主流程）。
+  // media: { url?: string, buffer?: Buffer, ext?: string }
+  async saveMedia({ channelName, id, media }) {
+    if (!media) return '';
+    const urlPath = media.url ? media.url.split('?')[0] : '';
+    const ext = (media.ext || (urlPath && path.extname(urlPath).slice(1)) || 'bin')
+      .replace(/[^\w]/g, '')
+      .slice(0, 8) || 'bin';
+    const dir = path.join(this.archiveRoot, Storage.safe(channelName), '媒体');
+    fs.mkdirSync(dir, { recursive: true });
+    const fname = `${id}-${crypto.randomBytes(3).toString('hex')}.${ext}`;
+    const fpath = path.join(dir, fname);
+    try {
+      if (media.buffer) {
+        fs.writeFileSync(fpath, media.buffer);
+      } else if (media.url) {
+        const res = await fetch(media.url);
+        if (!res.ok) throw new Error(`下载媒体失败 ${res.status}`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        fs.writeFileSync(fpath, buf);
+      } else {
+        return '';
+      }
+      return path.join(Storage.safe(channelName), '媒体', fname);
+    } catch (e) {
+      console.error('[ClawVault] 媒体落盘失败:', e?.message || e);
+      return '';
+    }
+  }
+
   _map(row) {
     return {
       id: row.id,
@@ -242,6 +279,7 @@ export class Storage {
       kind: row.kind,
       path: row.path,
       voice: row.voice || '',
+      media: row.media || '',
     };
   }
 
@@ -340,5 +378,24 @@ export class Storage {
 
   count() {
     return this.db.prepare('SELECT COUNT(*) AS c FROM messages').get().c;
+  }
+
+  // 运行状况统计：总数、按类型分布、按分类分布、媒体缺口（应存媒体却未落盘）
+  stats() {
+    const total = this.count();
+    const byKindRows = this.db.prepare('SELECT kind, COUNT(*) AS c FROM messages GROUP BY kind').all();
+    const byKind = {};
+    for (const r of byKindRows) byKind[r.kind || 'unknown'] = r.c;
+    const catRows = this.db
+      .prepare('SELECT category, COUNT(*) AS c FROM messages GROUP BY category ORDER BY c DESC')
+      .all();
+    const byCategory = catRows.map((r) => ({ category: r.category, count: r.c }));
+    // 这些类型应通过 saveMedia 落盘；若 media 为空即为"缺口"（照片缺失的根因信号）
+    const mediaKinds = ['image', 'video', 'file', 'sticker', 'gif', 'picture', 'photo', 'short_video', 'document'];
+    const gaps = this.db
+      .prepare(`SELECT COUNT(*) AS c FROM messages WHERE kind IN (${mediaKinds.map(() => '?').join(',')}) AND (media IS NULL OR media = '')`)
+      .get(...mediaKinds).c;
+    const stored = this.db.prepare("SELECT COUNT(*) AS c FROM messages WHERE media IS NOT NULL AND media != ''").get().c;
+    return { total, byKind, byCategory, mediaGaps: gaps, mediaStored: stored };
   }
 }

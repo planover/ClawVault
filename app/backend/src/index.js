@@ -15,6 +15,8 @@ import createFoldersRouter from './routes/folders.js';
 import createSettingsRouter from './routes/settings.js';
 import createChatsRouter from './routes/chats.js';
 import createVoiceRouter from './routes/voice.js';
+import createMediaRouter from './routes/media.js';
+import createHealthRouter from './routes/health.js';
 
 // ---- 设置持久化（覆盖默认配置） ----
 function loadSettings() {
@@ -50,6 +52,7 @@ function saveSettings() {
 
 loadSettings();
 
+const startedAt = Date.now();
 const storage = new Storage({ dataDir: config.dataDir, archiveRoot: config.archiveRoot });
 const ws = new WSBroadcaster();
 
@@ -68,6 +71,15 @@ async function handleMessage(channel, msg) {
     category: '待分类',
     sub: '',
   });
+  // 媒体落盘（图片/文件/视频/表情）：仅当 provider 提供了 media（URL/二进制）才保存
+  let mediaRel = '';
+  if (msg.media && (msg.media.url || msg.media.buffer) && !Storage.isChat(msg.kind)) {
+    mediaRel = await storage.saveMedia({ channelName: channel.name, id: record.id, media: msg.media });
+    if (mediaRel) {
+      storage.setMedia(record.id, mediaRel);
+      record.media = mediaRel;
+    }
+  }
   ws.broadcast({ type: 'message', record });
 
   // 纯文本 / 语音 → 聊天.xlsx
@@ -156,6 +168,8 @@ app.use('/api/folders', createFoldersRouter({ storage }));
 app.use('/api/settings', createSettingsRouter({ config, storage, saveSettings }));
 app.use('/api/chats', createChatsRouter({ storage }));
 app.use('/api/voice', createVoiceRouter({ storage }));
+app.use('/api/media', createMediaRouter({ storage }));
+app.use('/api/health', createHealthRouter({ storage, manager, config, startedAt }));
 
 // 已注册的 bot 接入类型（前端"添加通道"表单据此渲染）
 app.get('/api/providers', (req, res) => res.json(listProviders()));

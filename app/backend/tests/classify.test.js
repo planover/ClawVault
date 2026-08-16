@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import config from '../src/config.js';
-import { platformKindToCategory, resolveClassification } from '../src/classify.js';
+import { platformKindToCategory, resolveClassification, classifyText, getRecentAiFailures } from '../src/classify.js';
 
 // 确保默认开启「优先平台类型」
 config.classification.usePlatformType = true;
@@ -97,3 +97,31 @@ test('端到端行为：平台类型为 image 时完全不调用 AI（fetch）',
     globalThis.fetch = origFetch;
   }
 });
+
+test('classifyText 失败（网络错误）被记录到 recentFailures 且返回未分类', async () => {
+  const before = getRecentAiFailures().length;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('network down');
+  };
+  try {
+    config.ai.enabled = true;
+    config.ai.apiKey = 'test-key';
+    const r = await classifyText('测试分类文本');
+    assert.equal(r.category, '未分类');
+    const after = getRecentAiFailures();
+    assert.equal(after.length, before + 1, '应多记录一条失败');
+    const last = after[after.length - 1];
+    assert.equal(last.stage, 'classifyText');
+    assert.match(last.error, /network down/);
+  } finally {
+    globalThis.fetch = origFetch;
+    config.ai.apiKey = '';
+    config.ai.enabled = DEFAULT_ENABLED();
+  }
+});
+
+// 还原默认 enabled（classify.js 默认 enabled=true 但要求 apiKey）
+function DEFAULT_ENABLED() {
+  return Boolean(config.ai.apiKey);
+}

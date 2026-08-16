@@ -3,6 +3,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const MIME = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  mkv: 'video/x-matroska',
   mp3: 'audio/mpeg',
   wav: 'audio/wav',
   ogg: 'audio/ogg',
@@ -10,19 +21,22 @@ const MIME = {
   m4a: 'audio/mp4',
   aac: 'audio/aac',
   flac: 'audio/flac',
-  webm: 'audio/webm',
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  json: 'application/json',
+  zip: 'application/zip',
 };
 
-// 语音音频流式播放（按消息 id 取该条聊天消息落盘的音频文件；支持 Range 以便浏览器拖动进度）
-export default function createVoiceRouter({ storage }) {
+// 媒体文件服务：按消息 id 取落盘的图片/文件/视频，支持 Range 以便大文件/视频拖动。
+// 与语音路由一致，强制校验路径落在归档根内，防止 media 字段被构造导致路径穿越。
+export default function createMediaRouter({ storage }) {
   const r = Router();
 
   r.get('/:id', (req, res) => {
     const m = storage.getMessage(parseInt(req.params.id, 10));
-    if (!m || !m.voice) return res.status(404).json({ error: 'not found' });
+    if (!m || !m.media) return res.status(404).json({ error: 'not found' });
     const root = path.resolve(storage.archiveRoot);
-    const abs = path.resolve(storage.archiveRoot, m.voice);
-    // 路径穿越防护：解析后必须仍落在归档根内
+    const abs = path.resolve(storage.archiveRoot, m.media);
     if (abs !== root && !abs.startsWith(root + path.sep)) {
       return res.status(403).json({ error: 'forbidden' });
     }

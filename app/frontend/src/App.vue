@@ -124,6 +124,21 @@ onMounted(() => {
           <span class="muted">{{ selectedMessage.channelName }} · {{ new Date(selectedMessage.ts).toLocaleString('zh-CN') }}</span>
         </div>
         <div class="content">{{ selectedMessage.text }}</div>
+        <div v-if="selectedMessage.kind === 'image' && selectedMessage.media" class="media">
+          <div class="muted small">图片</div>
+          <img :src="api.mediaUrl(selectedMessage.id)" alt="图片" />
+        </div>
+        <div v-else-if="selectedMessage.kind === 'video' && selectedMessage.media" class="media">
+          <div class="muted small">视频</div>
+          <video controls :src="api.mediaUrl(selectedMessage.id)"></video>
+        </div>
+        <div v-else-if="selectedMessage.kind === 'file' && selectedMessage.media" class="media">
+          <div class="muted small">文件</div>
+          <a :href="api.mediaUrl(selectedMessage.id)" target="_blank" download>📎 下载文件</a>
+        </div>
+        <div v-else-if="['image', 'video', 'file'].includes(selectedMessage.kind) && !selectedMessage.media" class="media">
+          <div class="muted small">⚠️ 该媒体未保存（旧版本或接收时缺失）</div>
+        </div>
         <div v-if="selectedMessage.voice" class="voice">
           <div class="muted small">语音</div>
           <audio controls :src="api.voiceUrl(selectedMessage.id)"></audio>
@@ -255,5 +270,16 @@ onMounted(() => {
 .voice audio {
   width: 100%;
   margin-top: 6px;
+}
+.media {
+  margin-top: 14px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 12px;
+}
+.media img,
+.media video {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
 }
 </style>

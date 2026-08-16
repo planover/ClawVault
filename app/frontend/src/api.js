@@ -34,6 +34,7 @@ export const api = {
   folders: () => getJson('/api/folders'),
   chats: () => getJson('/api/chats'),
   voiceUrl: (id) => `/api/voice/${id}`,
+  mediaUrl: (id) => `/api/media/${id}`,
   getSettings: () => getJson('/api/settings'),
   saveSettings: (body) =>
     getJson('/api/settings', { method: 'POST', body: JSON.stringify(body) }),

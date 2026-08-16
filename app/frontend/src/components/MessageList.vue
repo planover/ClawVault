@@ -1,4 +1,5 @@
 <script setup>
+import { api } from '../api.js';
 const props = defineProps({ messages: Array, selectedId: { type: [Number, null], default: null } });
 const emit = defineEmits(['select']);
 
@@ -23,6 +24,13 @@ function fmt(ts) {
         <span class="tag">{{ m.category }}<template v-if="m.sub"> / {{ m.sub }}</template></span>
         <span class="muted">{{ fmt(m.ts) }}</span>
       </div>
+      <div v-if="m.kind === 'image' && m.media" class="thumb">
+        <img :src="api.mediaUrl(m.id)" loading="lazy" alt="图片" />
+      </div>
+      <div v-else-if="(m.kind === 'video' || m.kind === 'file') && m.media" class="thumb">
+        <a :href="api.mediaUrl(m.id)" target="_blank" download>📎 查看/下载附件</a>
+      </div>
+      <div v-else-if="m.kind === 'image' && !m.media" class="muted small">🖼️ 图片未保存（旧版本）</div>
       <div class="text">{{ m.text }}</div>
     </div>
   </div>
@@ -57,6 +65,18 @@ function fmt(ts) {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.thumb {
+  margin-bottom: 6px;
+}
+.thumb img {
+  max-width: 100%;
+  max-height: 160px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+.small {
+  font-size: 11px;
 }
 .muted {
   font-size: 11px;

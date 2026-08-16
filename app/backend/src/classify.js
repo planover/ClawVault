@@ -1,5 +1,18 @@
 import config from './config.js';
 
+// 运行时 AI 失败环形缓冲：供 /api/health 暴露最近失败，便于快速定位分类异常根因。
+const _recentAiFailures = [];
+const MAX_AI_FAILURES = 50;
+
+export function recordAiFailure(info) {
+  _recentAiFailures.push({ ts: Date.now(), ...info });
+  if (_recentAiFailures.length > MAX_AI_FAILURES) _recentAiFailures.shift();
+}
+
+export function getRecentAiFailures() {
+  return _recentAiFailures.map((x) => ({ ...x }));
+}
+
 // 社交平台能直接判定的消息类型 → 分类（无需 AI）。
 // 文本(text)返回 null，表示仍需 AI 做语义归类；其余按类型直接归类，减少 AI 调用。
 const KIND_MAP = {
@@ -68,11 +81,17 @@ export async function classifyText(text) {
         messages: [{ role: 'user', content: text.slice(0, 4000) }],
       }),
     });
-    if (!res.ok) return { category: '未分类', sub: '' };
+    if (!res.ok) {
+      recordAiFailure({ stage: 'classifyText', status: res.status });
+      console.error(`[ClawVault] AI 分类接口返回异常状态 ${res.status}`);
+      return { category: '未分类', sub: '' };
+    }
     const data = await res.json();
     const content = data?.content?.[0]?.text || '';
     return parseCategory(content);
-  } catch {
+  } catch (e) {
+    recordAiFailure({ stage: 'classifyText', error: String(e?.message || e) });
+    console.error('[ClawVault] AI 分类失败:', e?.message || e);
     return { category: '未分类', sub: '' };
   }
 }

@@ -22,6 +22,24 @@ function wechatKind(msg) {
   return 'text';
 }
 
+// 提取图片 / 视频 / 文件 / 语音的媒体地址，供 Storage 落盘。
+// iLink 协议字段名可能随版本变化，这里做尽量宽松的兼容：
+//   image_item.{image_url,cdn_url,url,file_url} / video_item.* / file_item|file.* / voice_item.{voice_url,url}
+// 返回 { url, ext } 或 null（纯文本 / 无可用地址时）。
+function extractMedia(msg, kind) {
+  const item = msg.item_list?.[0] || {};
+  let m = null;
+  if (kind === 'image') m = item.image_item || {};
+  else if (kind === 'video') m = item.video_item || {};
+  else if (kind === 'file') m = item.file_item || item.file || {};
+  else if (kind === 'voice') m = item.voice_item || {};
+  if (!m) return null;
+  const url = m.image_url || m.cdn_url || m.url || m.file_url || m.video_url || m.voice_url || (typeof m === 'string' ? m : null);
+  if (!url) return null;
+  const ext = (m.ext || (url.split('?')[0].split('.').pop() || 'bin')).slice(0, 6).replace(/[^\w]/g, '');
+  return { url, ext };
+}
+
 export class WeChatIlinkProvider extends Provider {
   constructor({ channel }) {
     super({ channel });
@@ -113,6 +131,8 @@ export class WeChatIlinkProvider extends Provider {
             if (kind === 'voice') {
               text = item.voice_item?.voice_text || item.voice_item?.text || '';
             }
+            // 提取图片/视频/文件/语音媒体地址（用于落盘与前端展示）
+            const media = extractMedia(msg, kind);
             // 纯文本无内容、语音又无转写时跳过（避免空行）
             if (!text && kind !== 'voice') continue;
             await this.channel.deliver({
@@ -122,6 +142,7 @@ export class WeChatIlinkProvider extends Provider {
               ts: Date.now(),
               raw: msg,
               kind,
+              media,
             });
           }
         } catch {
