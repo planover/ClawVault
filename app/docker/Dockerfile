@@ -13,11 +13,11 @@ FROM node:18-bookworm-slim AS backend
 WORKDIR /app/backend
 # 版本号通过 build arg 注入环境变量，避免依赖仓库根 manifest 文件
 # （fpk 解包后 docker build 上下文为 app/，仓库根 manifest 不在该上下文内，COPY 会失败）
-ARG VERSION=1.0.15
+ARG VERSION=1.0.16
 ENV CLAWVAULT_VERSION=${VERSION}
 # better-sqlite3 需要原生编译，安装编译依赖；ffmpeg 用于语音格式转码（AMR/SILK → MP3/WAV）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 make g++ sqlite3 libsqlite3-dev ca-certificates ffmpeg \
+      python3 make g++ sqlite3 libsqlite3-dev ca-certificates ffmpeg curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/package.json backend/package-lock.json* ./

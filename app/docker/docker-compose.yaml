@@ -8,8 +8,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        VERSION: "1.0.15"
-    image: clawvault:1.0.15
+        VERSION: "1.0.16"
+    image: clawvault:1.0.16
     container_name: clawvault
     restart: unless-stopped
     healthcheck:
