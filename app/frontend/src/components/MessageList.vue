@@ -56,8 +56,10 @@ function toggleVoice(id) {
       <div v-else-if="(m.kind === 'image' || m.kind === 'sticker') && !m.media" class="muted small">
         🖼️ {{ m.kind === 'sticker' ? '表情' : '图片' }}未保存（旧版本或接收时缺失）
       </div>
-      <div v-else-if="(m.kind === 'video' || m.kind === 'file') && m.media" class="thumb">
-        <a :href="api.mediaUrl(m.id)" target="_blank" download @click.stop>📎 查看/下载附件</a>
+      <div v-else-if="(m.kind === 'video' || m.kind === 'file') && m.media" class="thumb file">
+        <a :href="api.mediaUrl(m.id)" target="_blank" :download="m.filename || ''" @click.stop>
+          📎 {{ m.filename || '查看/下载附件' }}
+        </a>
       </div>
       <!-- 语音：文字 + 可折叠「听原文」语音条 -->
       <template v-else-if="m.kind === 'voice'">

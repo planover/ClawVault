@@ -30,8 +30,8 @@ import { normalizeAesKey } from '../ilink_crypto.js';
 // 提取图片 / 视频 / 文件 / 语音 / 表情的媒体地址，供 Storage 落盘。
 // iLink 真机结构（已通过真机 debug 日志确认）：直链藏在
 //   <kind>_item.media.full_url，且用 <kind>_item.aeskey（hex）做 AES-128-ECB 加密。
-// 这里做尽量宽松的兼容，按优先级尝试多种字段名，并透传解密密钥。
-// 返回 { url, ext, aesKey } 或 null（纯文本 / 无可用地址时）。
+// 这里做尽量宽松的兼容，按优先级尝试多种字段名，并透传解密密钥与原始文件名。
+// 返回 { url, ext, aesKey, filename } 或 null（纯文本 / 无可用地址时）。
 export function extractMedia(msg, kind) {
   const item = msg.item_list?.[0] || {};
   let m = null;
@@ -52,11 +52,26 @@ export function extractMedia(msg, kind) {
     m.video_url ||
     m.voice_url ||
     m.thumb_url ||
+    m.cover_url ||
+    m.icon_url ||
+    m.preview_url ||
+    m.emoji_url ||
     (typeof m === 'string' ? m : null);
   if (!url) return null;
-  const aesKey = normalizeAesKey(m.aeskey || m.media?.aes_key);
-  const ext = (m.ext || (url.split('?')[0].split('.').pop() || 'bin')).slice(0, 6).replace(/[^\w]/g, '');
-  return { url, ext, aesKey };
+  // 密钥兼容：aeskey / aes_key 可能出现在对象顶层或 media 子对象
+  const aesKey = normalizeAesKey(m.aeskey || m.aes_key || m.media?.aeskey || m.media?.aes_key);
+  // 原始文件名：文件消息优先取 file_name，其次用 URL 路径最后一段
+  let filename = '';
+  if (kind === 'file') {
+    filename = m.file_name || m.filename || m.title || '';
+  }
+  const urlPath = url.split('?')[0];
+  if (!filename && urlPath) {
+    const last = urlPath.split('/').pop();
+    if (last && last.includes('.')) filename = decodeURIComponent(last);
+  }
+  const ext = (m.ext || (urlPath.split('.').pop() || 'bin')).slice(0, 6).replace(/[^\w]/g, '');
+  return { url, ext, aesKey, filename };
 }
 
 // 诊断：图片/视频/文件/表情消息取不到直链下载地址时，把原始 item 记录到日志，

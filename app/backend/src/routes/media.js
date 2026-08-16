@@ -29,6 +29,12 @@ const MIME = {
 
 // 媒体文件服务：按消息 id 取落盘的图片/文件/视频，支持 Range 以便大文件/视频拖动。
 // 与语音路由一致，强制校验路径落在归档根内，防止 media 字段被构造导致路径穿越。
+function contentDisposition(filename) {
+  const plain = String(filename).replace(/["\\]/g, '');
+  const encoded = encodeURIComponent(plain).replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${plain}"; filename*=UTF-8''${encoded}`;
+}
+
 export default function createMediaRouter({ storage }) {
   const r = Router();
 
@@ -61,12 +67,14 @@ export default function createMediaRouter({ storage }) {
       res.set('Accept-Ranges', 'bytes');
       res.set('Content-Range', `bytes ${start}-${end}/${stat.size}`);
       res.set('Content-Length', end - start + 1);
+      if (m.kind === 'file' && m.filename) res.set('Content-Disposition', contentDisposition(m.filename));
       return fs.createReadStream(abs, { start, end }).pipe(res);
     }
 
     res.set('Content-Type', type);
     res.set('Accept-Ranges', 'bytes');
     res.set('Content-Length', stat.size);
+    if (m.kind === 'file' && m.filename) res.set('Content-Disposition', contentDisposition(m.filename));
     fs.createReadStream(abs).pipe(res);
   });
 

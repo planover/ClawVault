@@ -71,6 +71,7 @@ async function handleMessage(channel, msg) {
     kind: msg.kind || '',
     category: '待分类',
     sub: '',
+    filename: msg.media?.filename || '',
   });
   // 媒体落盘（图片/文件/视频/表情）：仅当 provider 提供了 media（URL/二进制）才保存
   let mediaRel = '';

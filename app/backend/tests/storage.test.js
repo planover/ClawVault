@@ -128,6 +128,15 @@ test('saveMessage 携带 media 字段；setMedia 可回填', ser, () => {
   assert.equal(storage.getMessage(rec.id).media, '通道G/媒体/y.png');
 });
 
+test('saveMessage 携带 filename 字段并能在查询中返回', ser, () => {
+  const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道G', peer: 'u8', text: '文件', kind: 'file', category: '文件', filename: '202604虫害+捕鼠笼点检.pdf' });
+  assert.equal(rec.filename, '202604虫害+捕鼠笼点检.pdf');
+  assert.equal(storage.getMessage(rec.id).filename, '202604虫害+捕鼠笼点检.pdf');
+  const list = storage.listMessages({ channelId: 'c1' });
+  const found = list.items.find((m) => m.id === rec.id);
+  assert.equal(found?.filename, '202604虫害+捕鼠笼点检.pdf');
+});
+
 test('saveMedia：buffer 写入媒体并返回相对路径', ser, async () => {
   const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道H', peer: 'u9', text: '图', kind: 'image', category: '图片' });
   const rel = await storage.saveMedia({ channelName: '通道H', id: rec.id, media: { buffer: Buffer.from('IMGDATA'), ext: 'png' } });
@@ -190,11 +199,12 @@ test('saveVoiceFile：带 aesKey 自动 AES-128-ECB 解密并据真实文件头�
   const crypto = await import('node:crypto');
   const key = crypto.createHash('md5').update('voicekey').digest(); // 16 字节
   const aesKey = key.toString('hex');
-  const sample = Buffer.concat([Buffer.from([0x23, 0x21, 0x41, 0x4d, 0x52]), Buffer.from('AMRpayload-content')]); // #!AMR 头
+  // 用 MP3 帧头（0xFF 0xFB...）模拟浏览器可直接播放的明文语音，避免触发转码
+  const sample = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x00]), Buffer.from('MP3payload-content')]);
   const cipher = crypto.createCipheriv('aes-128-ecb', key, null);
   const enc = Buffer.concat([cipher.update(sample), cipher.final()]);
   const rel = await storage.saveVoiceFile({ channelName: '通道A', media: { buffer: enc, aesKey, ext: 'bin' } });
-  assert.ok(rel && rel.endsWith('.amr'), '应按真实文件头判定为 amr');
+  assert.ok(rel && rel.endsWith('.mp3'), '应按真实文件头判定为 mp3');
   assert.equal(fs.readFileSync(path.join(archiveRoot, rel)).toString(), sample.toString(), '应解密还原为原始音频明文');
 });
 

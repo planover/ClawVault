@@ -35,6 +35,7 @@ const KIND_LABELS = [
   { value: 'text', label: '文本' },
   { value: 'voice', label: '语音' },
   { value: 'image', label: '图片' },
+  { value: 'sticker', label: '表情' },
   { value: 'video', label: '视频' },
   { value: 'file', label: '文件' },
 ];
@@ -273,7 +274,9 @@ onMounted(() => {
         </div>
         <div v-else-if="selectedMessage.kind === 'file' && selectedMessage.media" class="media">
           <div class="muted small">文件</div>
-          <a :href="api.mediaUrl(selectedMessage.id)" target="_blank" download>📎 下载文件</a>
+          <a :href="api.mediaUrl(selectedMessage.id)" target="_blank" :download="selectedMessage.filename || ''">
+            📎 {{ selectedMessage.filename || '下载文件' }}
+          </a>
         </div>
         <div v-else-if="['image', 'video', 'file', 'sticker'].includes(selectedMessage.kind) && !selectedMessage.media" class="media">
           <div class="muted small">⚠️ 该媒体未保存（旧版本或接收时缺失）</div>

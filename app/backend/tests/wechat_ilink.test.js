@@ -26,3 +26,21 @@ test('extractMedia 无可用直链地址返回 null（触发诊断日志路径�
   const m = extractMedia({ item_list: [{ image_item: { image_id: 'abc', aes_key: 'k' } }] }, 'image');
   assert.equal(m, null);
 });
+
+test('extractMedia 识别表情并兼容 emoji_item.aes_key', () => {
+  const m = extractMedia({ item_list: [{ emoji_item: { image_url: 'http://x/e.gif', aes_key: 'MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=' } }] }, 'sticker');
+  assert.equal(m.url, 'http://x/e.gif');
+  assert.equal(m.ext, 'gif');
+  assert.ok(m.aesKey, '应从 aes_key 字段提取到密钥');
+});
+
+test('extractMedia 从 file_item 提取原始文件名', () => {
+  const m = extractMedia({ item_list: [{ file_item: { file_name: '报告.pdf', file_url: 'http://x/report.pdf' } }] }, 'file');
+  assert.equal(m.url, 'http://x/report.pdf');
+  assert.equal(m.filename, '报告.pdf');
+});
+
+test('extractMedia 从 URL 路径提取文件名作为兜底', () => {
+  const m = extractMedia({ item_list: [{ file_item: { file_url: 'http://x/a%20b.docx' } }] }, 'file');
+  assert.equal(m.filename, 'a b.docx');
+});

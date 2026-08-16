@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { decryptIlink, detectMediaExt } from './ilink_crypto.js';
+import { transcodeVoice } from './voice_transcode.js';
 
 // 判断 buffer 是否已是可识别的图片/音频文件头（用于决定是否需要 AES 解密）
 function isMediaHeader(buf) {
@@ -44,14 +45,16 @@ export class Storage {
         kind TEXT,
         path TEXT,
         voice TEXT,
+        media TEXT,
+        filename TEXT,
         created_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_msgs_channel ON messages(channel_id);
       CREATE INDEX IF NOT EXISTS idx_msgs_cat ON messages(category, sub);
       CREATE INDEX IF NOT EXISTS idx_msgs_ts ON messages(ts);
     `);
-    // 兼容旧库：补齐 kind / voice / media 列
-    for (const col of ['kind', 'voice', 'media']) {
+    // 兼容旧库：补齐 kind / voice / media / filename 列
+    for (const col of ['kind', 'voice', 'media', 'filename']) {
       try {
         this.db.exec(`ALTER TABLE messages ADD COLUMN ${col} TEXT`);
       } catch {
@@ -101,7 +104,7 @@ export class Storage {
   }
 
   // 保存一条消息：写 SQLite；非聊天类(图片/文件…)同时落盘 Markdown，聊天类(纯文本/语音)不落 Markdown
-  saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '', voice = '', media = '' }) {
+  saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '', voice = '', media = '', filename = '' }) {
     const ts = Date.now();
     const chat = Storage.isChat(kind);
     let fpath = '';
@@ -128,11 +131,12 @@ export class Storage {
       path: fpath,
       voice: voice || '',
       media: media || '',
+      filename: filename || '',
       created_at: ts,
     };
     const r = this.db
       .prepare(
-        'INSERT INTO messages (channel_id, channel_name, peer, ts, category, sub, text, kind, path, voice, media, created_at) VALUES (@channel_id, @channel_name, @peer, @ts, @category, @sub, @text, @kind, @path, @voice, @media, @created_at)',
+        'INSERT INTO messages (channel_id, channel_name, peer, ts, category, sub, text, kind, path, voice, media, filename, created_at) VALUES (@channel_id, @channel_name, @peer, @ts, @category, @sub, @text, @kind, @path, @voice, @media, @filename, @created_at)',
       )
       .run(info);
     return { id: Number(r.lastInsertRowid), ...info };
@@ -176,9 +180,9 @@ export class Storage {
     return row ? this._map(row) : null;
   }
 
-  // 保存语音音频：下载/写入到 [通道]/语音/<时间戳>.<ext>，返回相对归档根路径（或原 URL）
+  // 保存语音音频：下载/解密/转码后写入 [通道]/语音/<时间戳>.<ext>，返回相对归档根路径（或原 URL）。
   // media: { url?: string, buffer?: Buffer, ext?: string, aesKey?: string }
-  // 若带 aesKey（iLink 加密媒体），下载/写入后做 AES-128-ECB 解密，并按真实文件头判定扩展名。
+  // iLink 加密语音做 AES-128-ECB 解密；对 SILK/AMR 等浏览器不支持的格式转码为 MP3/WAV。
   async saveVoiceFile({ channelName, media }) {
     if (!media) return '';
     const dir = this._voiceDir(channelName);
@@ -194,15 +198,15 @@ export class Storage {
       } else return '';
       // iLink 加密语音：AES-128-ECB 解密（已是音频头则跳过，兼容明文来源）
       if (media.aesKey && !isMediaHeader(buf)) buf = decryptIlink(buf, media.aesKey);
-      // 扩展名：优先真实文件头判定，其次 media.ext / URL 后缀
-      const urlPath = media.url ? media.url.split('?')[0] : '';
-      const ext = detectMediaExt(buf) || media.ext || (urlPath && path.extname(urlPath).slice(1)) || 'mp3';
-      const safeExt = String(ext).replace(/[^\w]/g, '').slice(0, 8) || 'mp3';
+      // 转码成浏览器可播放格式（SILK→WAV、AMR→MP3；MP3/WAV/OGG 等直接透传）
+      const transcoded = await transcodeVoice(buf, media.ext);
+      const safeExt = String(transcoded.ext).replace(/[^\w]/g, '').slice(0, 8) || 'mp3';
       const fname = `${stamp}-${crypto.randomBytes(3).toString('hex')}.${safeExt}`;
       const fpath = path.join(dir, fname);
-      fs.writeFileSync(fpath, buf);
+      fs.writeFileSync(fpath, transcoded.buffer);
       return path.join(Storage.safe(channelName), '语音', fname);
-    } catch {
+    } catch (e) {
+      console.error('[ClawVault] 保存语音失败:', e?.message || e);
       return media.url || '';
     }
   }
@@ -333,6 +337,7 @@ export class Storage {
       path: row.path,
       voice: row.voice || '',
       media: row.media || '',
+      filename: row.filename || '',
     };
   }
 
