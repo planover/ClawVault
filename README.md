@@ -121,7 +121,10 @@ cd app/frontend && npm install && npm run dev
 3. **语音转写 STT**（可选）：兼容 OpenAI `/v1/audio/transcriptions` 的端点；未配置时依赖社交端自带转写。
 4. **通道管理**：进入「通道管理」添加通道并绑定你的 bot；支持微信 ClawBot、Telegram、Webhook、钉钉/飞书/企微、Discord/Slack 等。
 
-> 首次打开时若提示「无法启用 clawvault / 本地应用启动失败」，通常是打包时脚本换行符为 CRLF。请确保 `cmd/main` 为 LF 换行符并重新打包；本仓库构建脚本已强制处理为 LF。
+> 首次打开时若提示「无法启用 clawvault / 本地应用启动失败」：
+> - 若 `main.log` 出现 `bad interpreter` 或 `^M` 相关错误，是 `cmd/main` 换行符为 CRLF，需以 LF 重新打包。
+> - 若 `main.log` 出现 `better_sqlite3.node: invalid ELF header`，是打包时误将 Windows 版原生模块混入 fpk，需重新运行 `bash scripts/build-fpk.sh --check`，确保注入的是 Linux ELF。
+> - 本仓库构建脚本已通过 `.gitattributes` 强制 LF、并在打包前清理并重新注入 Linux 原生二进制。
 
 ---
 
