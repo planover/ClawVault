@@ -46,6 +46,8 @@ echo "    ✓ 前端产物: app/backend/public/index.html"
 # 3) 后端生产依赖（--ignore-scripts 跳过 better-sqlite3 平台预编译，稍后注入 linux 预编译）
 echo "==> 安装后端生产依赖"
 cd "$REPO/app/backend"
+# 先清掉本机可能残留的 Windows/darwin 原生模块，避免 prepare-runtime.sh 看到文件存在就跳过
+rm -rf node_modules/better-sqlite3/build/Release/better_sqlite3.node
 npm install --omit=dev --ignore-scripts --no-audit --no-fund
 cd "$REPO"
 
@@ -85,6 +87,11 @@ if [ "${1:-}" = "--check" ]; then
     backend/src/index.js backend/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
     backend/public/index.html ui/config runtime/node/bin/node; do
     if [ ! -e "$SIM/$p" ]; then echo "    ✗ 缺失 $p"; ok=0; fi
+  done
+  # 校验原生二进制确为 Linux ELF，避免把 Windows PE / HTML 错误页打包进 fpk
+  for f in "$SIM/backend/node_modules/better-sqlite3/build/Release/better_sqlite3.node" "$SIM/runtime/node/bin/node"; do
+    head="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" || true
+    if [ "$head" != "7f454c46" ]; then echo "    ✗ $f 不是 Linux ELF（文件头 $head）"; ok=0; fi
   done
   # 原生应用不应再含 docker
   if [ -e "$SIM/docker" ]; then echo "    ✗ 不应包含 docker 目录（已改为原生）"; ok=0; fi
