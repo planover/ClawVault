@@ -145,7 +145,8 @@ if is_elf "$BSQL_NODE"; then
   echo "✓ better-sqlite3 原生模块已存在且为 Linux ELF"
 else
   echo "==> 准备 better-sqlite3 v$BSQL_VER linux-x64 预编译"
-  rm -f "$BSQL_NODE"
+  # 用 mv 移出仓库（而非 rm），避免 Windows safe-delete 守护拦截删除导致脚本中断
+  [ -e "$BSQL_NODE" ] && mv -f "$BSQL_NODE" /tmp/bsql-stale-$$.node 2>/dev/null || true
   mkdir -p "$BSQL_DIR/build/Release"
   TMP="$(mktemp -d)"
   BSQL_TAR="better-sqlite3-v$BSQL_VER-node-v127-linux-x64.tar.gz"

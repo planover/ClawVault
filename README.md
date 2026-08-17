@@ -90,7 +90,7 @@ bash scripts/prepare-runtime.sh
 # 2. 构建前端 + 后端 + 打包 fpk
 bash scripts/build-fpk.sh --check
 
-# 产物：dist-fpk/clawvault_1.0.17_x86_64.fpk
+# 产物：dist-fpk/clawvault_1.0.18_x86_64.fpk
 ```
 
 > 构建说明：

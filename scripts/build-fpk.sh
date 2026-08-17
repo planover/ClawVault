@@ -46,8 +46,11 @@ echo "    ✓ 前端产物: app/backend/public/index.html"
 # 3) 后端生产依赖（--ignore-scripts 跳过 better-sqlite3 平台预编译，稍后注入 linux 预编译）
 echo "==> 安装后端生产依赖"
 cd "$REPO/app/backend"
-# 先清掉本机可能残留的 Windows/darwin 原生模块，避免 prepare-runtime.sh 看到文件存在就跳过
-rm -rf node_modules/better-sqlite3/build/Release/better_sqlite3.node
+# 先清掉本机可能残留的 Windows/darwin 原生模块，避免 prepare-runtime.sh 看到文件存在就跳过。
+# 用 mv 移出仓库（而非 rm），避免 Windows safe-delete 守护（FAIL_CLOSED）拦截删除导致脚本中断。
+if [ -e node_modules/better-sqlite3/build/Release/better_sqlite3.node ]; then
+  mv -f node_modules/better-sqlite3/build/Release/better_sqlite3.node /tmp/bsql-stale-$$.node 2>/dev/null || rm -f node_modules/better-sqlite3/build/Release/better_sqlite3.node 2>/dev/null || true
+fi
 npm install --omit=dev --ignore-scripts --no-audit --no-fund
 cd "$REPO"
 
