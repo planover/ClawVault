@@ -17,3 +17,8 @@ data/
 # 构建产物（fpk 内层 app.tgz 与发布包目录）
 app.tgz
 dist-fpk/
+
+# 构建工具与缓存
+fnpack.exe
+.dl/
+app/runtime/

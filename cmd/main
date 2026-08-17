@@ -1,10 +1,9 @@
 #!/bin/sh
-# ClawVault fnOS 生命周期统一入口（cmd/main，标准 fnpack Docker 应用约定）
+# ClawVault fnOS 原生应用生命周期入口（cmd/main）
+# 不再使用 Docker：以内置 Node 运行时直接拉起后端，监听 Unix Socket 供飞牛统一网关转发。
+# 应用以「独立窗口」（iframe + 统一网关 /app/clawvault）嵌入飞牛桌面运行，而非另开网页。
+#
 # fnOS 调用：cmd/main {start|stop|status}
-# 安装后目录布局（fpk 解到 ${TRIM_APPDEST}/，外层条目 + app.tgz 内容直接铺平）：
-#   ${TRIM_APPDEST}/cmd/main              ← 此脚本
-#   ${TRIM_APPDEST}/docker/               ← app.tgz 内容（无 app/ 包装层）
-#   ${TRIM_APPDEST}/backend/ frontend/ ui/ ← 同上
 # 退出码约定（fnOS 文档）：
 #   start : 0=成功 / 非 0=失败
 #   stop  : 0=成功
@@ -12,43 +11,113 @@
 # 把错误写入 ${TRIM_TEMP_LOGFILE}（fnOS 用户可见错误通道），便于在 NAS 报错面板定位。
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 APP_DIR="${TRIM_APPDEST:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-DOCKER_DIR="$APP_DIR/docker"
+RT_DIR="$APP_DIR/runtime/node"
+NODE_BIN="$RT_DIR/bin/node"
+BACKEND_DIR="$APP_DIR/backend"
+PID_FILE="$APP_DIR/var/clawvault.pid"
 LOG_DIR="${TRIM_PKGVAR:-$APP_DIR/var}"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
-LOG_FILE="${TRIM_TEMP_LOGFILE:-$LOG_DIR/main.log}"
-# 必须与 docker/docker-compose.yaml 中 container_name 完全一致
-CONTAINER_NAME="clawvault"
+LOG_FILE="$LOG_DIR/main.log"
+# 统一网关 Socket：ui/config 中 gatewaySocket="app.sock"，fnOS 在 ${TRIM_APPDEST}/app.sock 处连接
+SOCK="$APP_DIR/app.sock"
+GATEWAY_PREFIX="/app/clawvault"
 
-# 把文本同时写 TRIM_TEMP_LOGFILE 与 PKGVAR 日志；TRIM_TEMP_LOGFILE 是 fnOS 报错面板通道
-say() { printf '%s\n' "$*"; printf '%s\n' "$*" >> "$LOG_FILE" 2>/dev/null || true; }
-die() { say "ClawVault: $*"; exit 1; }
+# 确保内置二进制有执行位（部分打包/解压流程会丢失 +x 位，真机 Linux 上补回）
+chmod +x "$NODE_BIN" 2>/dev/null || true
+[ -d "$APP_DIR/runtime/bin" ] && find "$APP_DIR/runtime/bin" -maxdepth 1 -type f -exec chmod +x {} + 2>/dev/null || true
+
+# 持久数据（SQLite DB / settings / channels.json）放在 var 目录，重启后保留
+DATA_DIR="$LOG_DIR"
+
+# 归档根目录：取 config/resource 声明的 data-share 第一个挂载路径
+SHARE_PATHS="${TRIM_DATA_SHARE_PATHS:-}"
+ARCHIVE_ROOT=$(printf '%s' "$SHARE_PATHS" | cut -d: -f1)
+if [ -z "$ARCHIVE_ROOT" ]; then
+  ARCHIVE_ROOT="${TRIM_DATA_SHARE:-/archive}"
+fi
+
+log() {
+  printf '%s\n' "$*" >> "$LOG_FILE" 2>/dev/null || true
+  printf '%s\n' "$*"
+}
+die() {
+  printf '%s\n' "ClawVault: $*" >> "$LOG_FILE" 2>/dev/null || true
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "ClawVault: $*" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+  fi
+  printf '%s\n' "ClawVault: $*" >&2
+  exit 1
+}
+
+is_running() {
+  [ -f "$PID_FILE" ] || return 1
+  pid=$(cat "$PID_FILE" 2>/dev/null || true)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
 
 case "${1:-}" in
   start)
-    say "start: APP_DIR=$APP_DIR DOCKER_DIR=$DOCKER_DIR"
-    [ -d "$DOCKER_DIR" ] || die "DOCKER_DIR 不存在: $DOCKER_DIR（fpk 未完整解包？）"
-    [ -f "$DOCKER_DIR/docker-compose.yaml" ] || die "compose 文件缺失: $DOCKER_DIR/docker-compose.yaml"
-    command -v docker >/dev/null 2>&1 || die "宿主 docker 命令不存在，请先在 fnOS 中启用 Docker 服务"
-    ( cd "$DOCKER_DIR" && docker compose up -d --build ) || die "docker compose up -d --build 失败，请到 SSH 查看 ${LOG_FILE}"
-    say "start: ok"
-    ;;
-  stop)
-    say "stop: $DOCKER_DIR"
-    if [ -d "$DOCKER_DIR" ]; then
-      ( cd "$DOCKER_DIR" && docker compose down ) || say "stop: docker compose down 失败(已忽略)"
-    fi
-    say "stop: ok"
-    ;;
-  status)
-    if command -v docker >/dev/null 2>&1 \
-       && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"; then
-      say "status: running ($CONTAINER_NAME)"
+    if is_running; then
+      log "ClawVault 已在运行 (pid $(cat "$PID_FILE" 2>/dev/null))"
       exit 0
     fi
-    say "status: stopped"
-    exit 3
+    [ -x "$NODE_BIN" ] || die "内置 Node 运行时缺失: $NODE_BIN（fpk 打包时未正确下载运行时？）"
+    [ -f "$BACKEND_DIR/src/index.js" ] || die "后端入口缺失: $BACKEND_DIR/src/index.js"
+    if [ ! -f "$BACKEND_DIR/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+      die "better-sqlite3 原生模块缺失（fpk 打包时未注入 linux 预编译？）"
+    fi
+    # 清理上次可能残留的 socket 文件
+    rm -f "$SOCK" 2>/dev/null || true
+    # 把 runtime/bin（含可选 ffmpeg）加入 PATH，供语音转码使用
+    RUNTIME_BIN="$APP_DIR/runtime/bin"
+    PATH="$RUNTIME_BIN:$PATH"
+    export PATH
+    SOCKET_PATH="$SOCK" \
+    GATEWAY_PREFIX="$GATEWAY_PREFIX" \
+    ARCHIVE_ROOT="$ARCHIVE_ROOT" \
+    DATA_DIR="$DATA_DIR" \
+    PORT="${PORT:-6789}" \
+    AI_API_KEY="${AI_API_KEY:-}" \
+    AI_BASE_URL="${AI_BASE_URL:-https://api.anthropic.com}" \
+    AI_MODEL="${AI_MODEL:-claude-sonnet-4-5}" \
+    DEMO_MODE="${DEMO_MODE:-false}" \
+    nohup "$NODE_BIN" "$BACKEND_DIR/src/index.js" >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    # 等待确认进程存活
+    sleep 1
+    if is_running; then
+      log "ClawVault 已启动 (pid $(cat "$PID_FILE" 2>/dev/null))  归档根: $ARCHIVE_ROOT"
+      exit 0
+    else
+      die "启动后进程未存活，详见 $LOG_FILE"
+    fi
+    ;;
+  stop)
+    if is_running; then
+      pid=$(cat "$PID_FILE" 2>/dev/null || true)
+      kill "$pid" 2>/dev/null || true
+      i=0
+      while [ $i -lt 5 ]; do
+        kill -0 "$pid" 2>/dev/null || break
+        i=$((i + 1))
+        sleep 1
+      done
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE" "$SOCK" 2>/dev/null || true
+    log "ClawVault 已停止"
+    exit 0
+    ;;
+  status)
+    if is_running; then
+      log "running"
+      exit 0
+    else
+      log "stopped"
+      exit 3
+    fi
     ;;
   *)
     printf '用法: main {start|stop|status}\n' >&2

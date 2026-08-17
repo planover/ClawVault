@@ -49,15 +49,20 @@
 ClawVault/
 ├── manifest              # fnOS 应用元数据（应用中心规范）
 ├── ICON.PNG / ICON_256.PNG
-├── Dockerfile            # 多阶段构建（前端 + Node 后端）
-├── docker-compose.yml    # 本地/自托管运行
 ├── cmd/                  # fnOS 生命周期脚本（start/stop/status）
 ├── wizard/               # 安装向导
-├── config/default.json   # 默认配置模板
+├── config/               # 权限、资源、能力声明
+│   ├── privilege         # 运行身份（package 专用用户）
+│   └── resource          # data-share / api-scope
+├── scripts/              # 构建脚本
+│   ├── build-fpk.sh      # 打 fpk 包
+│   └── prepare-runtime.sh# 下载内置 Node + better-sqlite3 预编译 + ffmpeg
 ├── app/
 │   ├── backend/          # Node 后端（多 Provider 接入 / 存储 / 分类 / API）
-│   │   └── src/providers/ # 各 Bot 平台适配器（新增平台在此加文件）
-│   └── frontend/         # Vue 前端
+│   │   └── src/providers/# 各 Bot 平台适配器（新增平台在此加文件）
+│   ├── frontend/         # Vue 前端
+│   ├── ui/               # 飞牛桌面入口配置
+│   └── runtime/          # 内置 Linux 运行时（Node / better-sqlite3 / ffmpeg）
 └── README.md
 ```
 
@@ -65,26 +70,38 @@ ClawVault/
 
 ## 快速开始
 
-### 方式一：Docker Compose（自托管 / 测试）
+### 方式一：飞牛 fnOS 应用中心（推荐）
+
+ClawVault 已改造为**原生 fnOS 应用**：内置 Node.js 运行时，无需 Docker，在飞牛桌面以**独立窗口**打开（非浏览器新标签）。
+
+#### 离线安装
+
+1. 下载本仓库 Releases 中的 `clawvault_<版本>_x86_64.fpk`。
+2. 飞牛「应用中心 → 离线安装」上传该 `.fpk`。
+3. 安装完成后，点击桌面「ClawVault（爪匣）」图标，即可在独立窗口内打开。
+
+#### 从源码构建 fpk
 
 ```bash
-# 1. 构建并启动
-PORT=6789 ARCHIVE_ROOT=/vol1/@app/ClawVault DEMO_MODE=false docker compose up -d --build
+# 1. 准备 Linux 运行时（Node v22.23.2 + better-sqlite3 预编译 + 可选 ffmpeg）
+#    脚本已做国内镜像适配；如本地网络受限，可手动把二进制放到 .dl/ 目录
+bash scripts/prepare-runtime.sh
 
-# 2. 浏览器打开
-#    http://<飞牛IP>:6789
+# 2. 构建前端 + 后端 + 打包 fpk
+bash scripts/build-fpk.sh --check
+
+# 产物：dist-fpk/clawvault_1.0.17_x86_64.fpk
 ```
 
-归档目录默认挂载到 `./archive`（可改为飞牛共享目录，如 `/vol1/@app/ClawVault`）。
+> 构建说明：
+> - 前端使用 `base=/app/clawvault/` 发布构建，保证资源路径与飞牛统一网关 `/app/clawvault` 一致。
+> - 后端依赖使用 `npm install --omit=dev --ignore-scripts`，并在 `app/runtime/` 中注入 Linux 原生 `better_sqlite3.node`，避免在 Windows/macOS 构建机拉错平台二进制。
+> - `ffmpeg` 为可选，仅用于 AMR 语音转 MP3；缺失时 SILK→WAV 仍可用纯 JS 解码，AMR 会保留原文件但不可播放。
 
-### 方式二：fnOS 应用中心
-
-本仓库符合飞牛第三方应用规范（`manifest` + `cmd/` + 图标 + `wizard/install` 安装向导）。将仓库打包为 fpk 或导入为本地第三方应用即可在应用中心一键安装；`cmd/main` 负责通过 Docker 拉起容器，`wizard/install` 为安装向导（含中文《许可协议》勾选步骤）。
-
-### 方式三：本地开发
+### 方式二：本地开发
 
 ```bash
-# 后端
+# 后端（直接 Node 启动，走 TCP 端口模式）
 cd app/backend && npm install
 ARCHIVE_ROOT=./archive DATA_DIR=./data PORT=6789 npm start
 
@@ -92,6 +109,19 @@ ARCHIVE_ROOT=./archive DATA_DIR=./data PORT=6789 npm start
 cd app/frontend && npm install && npm run dev
 # 前端默认代理到 http://localhost:6789
 ```
+
+---
+
+## 飞牛安装后配置
+
+安装完成并启动后，在独立窗口中打开「设置」页：
+
+1. **归档根目录**：默认指向 `TRIM_DATA_SHARE_PATHS` 中的第一个共享目录，可在设置中修改；建议指向一个已存在的飞牛共享文件夹。
+2. **AI 分类接口**（可选）：填写 `API Key`、`Base URL`、`Model`；留空则消息按平台类型或「未分类」归档。
+3. **语音转写 STT**（可选）：兼容 OpenAI `/v1/audio/transcriptions` 的端点；未配置时依赖社交端自带转写。
+4. **通道管理**：进入「通道管理」添加通道并绑定你的 bot；支持微信 ClawBot、Telegram、Webhook、钉钉/飞书/企微、Discord/Slack 等。
+
+> 首次打开时若提示「无法启用 clawvault / 本地应用启动失败」，通常是打包时脚本换行符为 CRLF。请确保 `cmd/main` 为 LF 换行符并重新打包；本仓库构建脚本已强制处理为 LF。
 
 ---
 

@@ -8,5 +8,9 @@
         }
       }
     ]
-  }
+  },
+  "api-scope": [
+    "trim.file.sharedAccess",
+    "trim.system.getPlatformConfig"
+  ]
 }

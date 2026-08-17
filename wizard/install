@@ -40,7 +40,7 @@
     "items": [
       {
         "type": "tips",
-        "helpText": "<p><b>安装完成后：</b></p><ol><li>在飞牛「应用中心」打开 ClawVault，或浏览器访问 <code>http://&lt;飞牛IP&gt;:6789</code>。</li><li>进入「设置」页，填写 AI 分类接口（api_key / base_url / model）；留空则退化为按时间归档，仍可使用。</li><li>进入「通道管理」，点击「添加通道」并扫码绑定你的微信 ClawBot；可添加多个通道，分别归档你与不同 bot 的对话。</li><li>此后与各 bot 的私聊会自动分类存入：<code>[归档根]/[通道]/[分类]/[子分类]/</code>。</li></ol><p>归档根目录默认挂载到飞牛共享目录中的 <code>archive</code> 文件夹。</p>"
+        "helpText": "<p><b>安装完成后：</b></p><ol><li>在飞牛「应用中心」点击 ClawVault 图标，应用会以<b>独立窗口</b>嵌入飞牛桌面运行（不再跳转外部网页）。</li><li>进入「设置」页，填写 AI 分类接口（api_key / base_url / model）；留空则退化为按时间归档，仍可使用。</li><li>进入「通道管理」，点击「添加通道」并扫码绑定你的微信 ClawBot；可添加多个通道，分别归档你与不同 bot 的对话。</li><li>此后与各 bot 的私聊会自动分类存入：<code>[归档根]/[通道]/[分类]/[子分类]/</code>。</li></ol><p>归档根目录默认挂载到飞牛共享目录中的 <code>clawvault</code> 文件夹。</p>"
       }
     ]
   }

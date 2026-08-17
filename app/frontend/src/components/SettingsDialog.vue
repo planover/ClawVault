@@ -1,12 +1,38 @@
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import { api } from '../api.js';
+import { pickArchiveDir, inFnosHost, revealInFileManager } from '../fnos.js';
 
 const props = defineProps({ show: Boolean });
 const emit = defineEmits(['close', 'saved']);
 const settings = ref(null);
 const testing = ref(false);
 const testResult = ref(null); // { ok, model, latencyMs, sample, raw } | { ok:false, error }
+// 是否在飞牛桌面窗口内运行——决定是否展示原生目录选择器与文件管理器入口
+const inHost = ref(false);
+const pickError = ref('');
+
+onMounted(async () => {
+  inHost.value = await inFnosHost();
+});
+
+// 调起飞牛原生目录选择器：选中即把该目录授权给 ClawVault（scope: trim.file.sharedAccess），
+// 免去用户先去系统应用设置手动加授权目录、再回来手敲路径
+async function chooseArchiveDir() {
+  pickError.value = '';
+  try {
+    const p = await pickArchiveDir();
+    if (p) settings.value.archiveRoot = p;
+    else pickError.value = '未选择目录（或当前环境不支持选择器）';
+  } catch (e) {
+    pickError.value = e?.message || '目录选择失败';
+  }
+}
+
+// 在飞牛文件管理器中定位归档目录，方便用户直接翻看归档结果
+function openArchiveDir() {
+  revealInFileManager(settings.value?.archiveRoot);
+}
 
 async function load() {
   const s = await api.getSettings();
@@ -64,7 +90,14 @@ async function testAI() {
       <h3>设置</h3>
 
       <label class="lbl">归档根目录</label>
-      <input class="input" v-model="settings.archiveRoot" />
+      <div class="row">
+        <input class="input" v-model="settings.archiveRoot" />
+        <template v-if="inHost">
+          <button class="btn" type="button" @click="chooseArchiveDir">选择目录…</button>
+          <button class="btn" type="button" @click="openArchiveDir">打开</button>
+        </template>
+      </div>
+      <p v-if="pickError" class="muted">{{ pickError }}</p>
 
       <label class="lbl">AI 自动分类</label>
       <div class="row">

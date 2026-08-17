@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { api, connectWS } from './api.js';
+import { setWindowTitle } from './fnos.js';
 import FolderTree from './components/FolderTree.vue';
 import MessageList from './components/MessageList.vue';
 import ChannelDialog from './components/ChannelDialog.vue';
@@ -178,6 +179,8 @@ onMounted(() => {
   loadChats();
   loadMessages(true);
   connectWS(onWSEvent);
+  // 在飞牛桌面窗口内运行时，同步窗口标题（非宿主环境自动忽略）
+  setWindowTitle('ClawVault（爪匣）');
 });
 </script>
 

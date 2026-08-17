@@ -1,0 +1,13 @@
+# 自动处理换行符；关键脚本/配置强制 LF，避免在 Windows 构建机被打包成 CRLF 导致飞牛启动失败
+* text=auto
+*.sh text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+cmd/* text eol=lf
+config/* text eol=lf
+app/ui/config text eol=lf
+manifest text eol=lf
+wizard/install text eol=lf

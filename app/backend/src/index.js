@@ -177,6 +177,39 @@ const manager = new ChannelManager({ dataDir: config.dataDir, onMessage: handleM
 manager.resumeAll();
 
 const app = express();
+
+// ---- 飞牛统一网关适配 ----
+// 网关把公开路径 /app/clawvault/** 原样转发到本服务的 Unix Socket，
+// 因此收到的 req.url 带前缀。这里在最前面剥离前缀，让下游所有既有路由
+// （/api/**、静态资源、SPA 兜底）无需改动即可复用；非网关模式下该中间件为空操作。
+if (config.gatewayPrefix) {
+  const prefix = config.gatewayPrefix;
+  app.use((req, res, next) => {
+    if (req.url === prefix) {
+      // 访问 /app/clawvault（无尾斜杠）时重定向到带斜杠版本，
+      // 保证前端相对资源与 SPA 路由的基准路径正确。
+      res.redirect(301, prefix + '/');
+      return;
+    }
+    if (req.url.startsWith(prefix + '/')) req.url = req.url.slice(prefix.length) || '/';
+    next();
+  });
+}
+
+// 网关注入的可信身份上下文（登录态已由飞牛校验）。
+// 官方要求：不得信任客户端自带的用户 ID，只认这三个 Header。
+app.use((req, res, next) => {
+  const uid = req.headers['x-trim-userid'];
+  req.fnUser = uid
+    ? {
+        uid: String(uid),
+        username: req.headers['x-trim-username'] ? String(req.headers['x-trim-username']) : '',
+        isAdmin: req.headers['x-trim-isadmin'] === 'true',
+      }
+    : null;
+  next();
+});
+
 app.use(express.json());
 
 if (config.demoMode) startDemoMode();
@@ -216,11 +249,52 @@ if (fs.existsSync(publicDir)) {
 }
 
 const server = http.createServer(app);
-ws.attach(server);
-server.listen(config.port, () => {
-  console.log(`ClawVault 已启动: http://0.0.0.0:${config.port}  (归档根: ${config.archiveRoot})`);
+
+// WebSocket 升级请求不经过 express 中间件，req.url 仍带网关前缀，
+// 因此这里要用「前缀 + /ws」注册，与前端连接地址保持一致。
+ws.attach(server, `${config.gatewayPrefix}/ws`);
+
+function onListening() {
+  const where = config.socketPath ? `unix:${config.socketPath}` : `http://0.0.0.0:${config.port}`;
+  const via = config.gatewayPrefix ? `  (网关前缀: ${config.gatewayPrefix})` : '';
+  console.log(`ClawVault 已启动: ${where}${via}  归档根: ${config.archiveRoot}`);
   if (config.demoMode) console.log('[演示模式] 已启用，将定时注入样本消息用于验证');
-});
+}
+
+if (config.socketPath) {
+  // 统一网关模式：监听 Unix Socket。
+  // 上次异常退出可能残留 socket 文件，导致 EADDRINUSE，先清理。
+  try {
+    if (fs.existsSync(config.socketPath)) fs.unlinkSync(config.socketPath);
+  } catch (e) {
+    console.error(`清理残留 socket 失败: ${e.message}`);
+  }
+  fs.mkdirSync(path.dirname(config.socketPath), { recursive: true });
+  server.listen(config.socketPath, () => {
+    // 飞牛网关进程与应用运行用户不同，需放开 socket 访问位才能转发进来。
+    try {
+      fs.chmodSync(config.socketPath, 0o666);
+    } catch (e) {
+      console.error(`设置 socket 权限失败: ${e.message}`);
+    }
+    onListening();
+  });
+
+  // 退出时清理 socket 文件，避免下次启动 EADDRINUSE
+  const cleanup = () => {
+    try {
+      server.close();
+      if (fs.existsSync(config.socketPath)) fs.unlinkSync(config.socketPath);
+    } catch {
+      /* 退出路径上的清理失败无需处理 */
+    }
+    process.exit(0);
+  };
+  process.on('SIGTERM', cleanup);
+  process.on('SIGINT', cleanup);
+} else {
+  server.listen(config.port, onListening);
+}
 
 // 演示模式：Mock 一个 bot 通道，定时注入样本消息，验证「接收→分类→落盘→UI」全链路
 function startDemoMode() {

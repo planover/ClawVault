@@ -1,5 +1,12 @@
 const DEFAULTS = {
   port: 6789,
+  // 飞牛统一网关：服务监听 Unix Socket（由 cmd/main 注入 SOCKET_PATH），
+  // 网关校验登录态后把 /app/clawvault/** 的请求转发进来。
+  // 为空则回退 TCP 端口监听（本地开发 / 非飞牛环境用）。
+  socket_path: '',
+  // 网关公开前缀，必须与 app/ui/config 的 gatewayPrefix 完全一致。
+  // 前端资源与 API 都挂在该前缀下，后端用中间件剥离后复用原有路由。
+  gateway_prefix: '',
   archive_root: '/archive',
   data_dir: '/data',
   ai: {
@@ -35,8 +42,18 @@ function env(name, fallback) {
   return v;
 }
 
+// 网关前缀标准化：去掉结尾斜杠，确保以 / 开头；空值表示不启用网关模式
+function normalizePrefix(raw) {
+  let p = String(raw || '').trim();
+  if (!p || p === '/') return '';
+  if (!p.startsWith('/')) p = '/' + p;
+  return p.replace(/\/+$/, '');
+}
+
 export const config = {
   port: parseInt(env('PORT', DEFAULTS.port), 10),
+  socketPath: env('SOCKET_PATH', DEFAULTS.socket_path),
+  gatewayPrefix: normalizePrefix(env('GATEWAY_PREFIX', DEFAULTS.gateway_prefix)),
   archiveRoot: env('ARCHIVE_ROOT', DEFAULTS.archive_root),
   dataDir: env('DATA_DIR', DEFAULTS.data_dir),
   ai: {

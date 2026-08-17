@@ -10,8 +10,7 @@ desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞�
 <p><font color="green">5. 落盘到飞牛：</font><br/>媒体文件按类型直接存入飞牛文件系统——图片进 <code>[通道]/图片/</code>、文件进 <code>[通道]/文件/</code>、视频进 <code>[通道]/视频/</code>、语音进 <code>[通道]/语音/</code>，文件名保留原文件名或消息文字摘要，可在飞牛相册/文件管理器直接预览；纯文本与语音转写汇入 <code>[通道]/聊天.xlsx</code>；内容相同的文件自动去重只存一份。并提供全文检索。</p>
 <p><font color="green">6. Web 管理：</font><br/>在飞牛内嵌浏览器查看分类树、对话流、消息详情，实时刷新（WebSocket）。</p>
 <p>采用可插拔多 Provider 架构，数据留在你自己的飞牛，不上传第三方。</p>"""
-arch=x86_64
-platform=all
+platform=x86
 source=thirdparty
 maintainer=planover
 maintainer_url=https://github.com/planover/ClawVault
@@ -21,9 +20,6 @@ os_min_version=1.1.3100
 ctl_stop=true
 desktop_uidir=ui
 desktop_applaunchname="clawvault.Application"
-desktop_index_entry_name="ClawVault"
-service_port=6789
-checkport=false
 disable_authorization_path=false
 changelog="""1.0.17：归档落盘重构——让文件能直接在飞牛浏览。此前媒体真实文件被统一塞进 [通道]/媒体/ 隐藏目录、分类目录里只剩说明用的 Markdown 卡片，导致飞牛相册/文件管理器无法直接预览。现改为：图片→[通道]/图片/、文件→[通道]/文件/（保留原始文件名）、视频→[通道]/视频/、语音→[通道]/语音/，落盘即真实原文件，可用飞牛直接打开；图片/视频文件名采用消息文字摘要做后缀；同通道内容相同的文件按 SHA-256 自动去重只存一份，避免重复占用空间；旧版本遗留的 媒体/ 目录文件启动时自动迁移到对应类型目录，并清理无用的 Markdown 卡片。另修复一处生产调用遗漏（index.js 未向 saveMedia 透传 kind/text，会导致全部媒体落入默认目录）。
 1.0.16：修复 v1.0.15 容器在飞牛显示为 unhealthy。根因：Dockerfile 后端基础镜像 node:18-bookworm-slim 不含 curl，而 docker-compose 的 healthcheck 用 curl 探活，导致 healthcheck 持续失败（exec: "curl": executable file not found），飞牛据此判定不健康。已在 Dockerfile apt 安装列表加入 curl，healthcheck 恢复正常；应用本身自 v1.0.15 起已正常服务（/api/health 返回 ok、数据库与微信通道均正常）。
