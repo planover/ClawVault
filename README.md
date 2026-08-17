@@ -90,7 +90,7 @@ bash scripts/prepare-runtime.sh
 # 2. 构建前端 + 后端 + 打包 fpk
 bash scripts/build-fpk.sh --check
 
-# 产物：dist-fpk/clawvault_1.0.19_x86_64.fpk
+# 产物：dist-fpk/clawvault_1.0.20_x86_64.fpk
 ```
 
 > 构建说明：
@@ -98,6 +98,7 @@ bash scripts/build-fpk.sh --check
 > - 后端依赖使用 `npm install --omit=dev --ignore-scripts`，并在 `app/runtime/` 中注入 Linux 原生 `better_sqlite3.node`，避免在 Windows/macOS 构建机拉错平台二进制。
 > - 随包在 `app/runtime/sqlite3-pristine/better_sqlite3.node` 额外备份一份经校验的 Linux ELF；`cmd/main` 启动前若发现 `node_modules` 内的 `.node` 被污染（如旧缓存残留），会自动从备份恢复，避免 `invalid ELF header` 启动失败。
 > - `ffmpeg` 为可选，仅用于 AMR 语音转 MP3；缺失时 SILK→WAV 仍可用纯 JS 解码，AMR 会保留原文件但不可播放。
+> - `cmd/main` 启动时会先解析真实应用根目录：优先用 `TRIM_APPDEST`，若未注入或 `runtime/node` 不在 `/var/apps/clawvault` 下，则自动探测 `/vol1/@appcenter/clawvault`（fnOS 实际解压目录）。可避免「控制目录 /var/apps/clawvault 下找不到内置 Node 运行时」的启动失败。
 
 ### 重要：升级前请先彻底清理旧残留
 
@@ -110,7 +111,7 @@ sudo rm -rf /var/apps/clawvault /vol1/@appcenter/clawvault
 # 3. 重新「应用中心 → 离线安装」上传新 fpk
 ```
 
-启动成功后，`main.log` 首行会打印包版本号，例如 `ClawVault v1.0.19 已启动 (pid ...)`，可据此确认 NAS 跑的是新包。
+启动成功后，`main.log` 首行会打印包版本号，例如 `ClawVault v1.0.20 已启动 (pid ...)`，可据此确认 NAS 跑的是新包。
 
 ### 方式二：本地开发
 

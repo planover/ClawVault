@@ -11,8 +11,15 @@
 # 把错误写入 ${TRIM_TEMP_LOGFILE}（fnOS 用户可见错误通道），便于在 NAS 报错面板定位。
 set -e
 
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-APP_DIR="${TRIM_APPDEST:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
+APP_DIR="${TRIM_APPDEST:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
+# fnOS 可能把 fpk 解压到 /vol1/@appcenter/clawvault/，而 /var/apps/clawvault/ 只是部分符号链接视图
+# （backend 被链接，runtime 没被链接）。若本目录树下找不到内置 Node 运行时，探测真实解压根。
+if [ ! -x "$APP_DIR/runtime/node/bin/node" ]; then
+  for cand in /vol1/@appcenter/clawvault /vol2/@appcenter/clawvault /vol3/@appcenter/clawvault; do
+    if [ -x "$cand/runtime/node/bin/node" ]; then APP_DIR="$cand"; break; fi
+  done
+fi
 RT_DIR="$APP_DIR/runtime/node"
 NODE_BIN="$RT_DIR/bin/node"
 BACKEND_DIR="$APP_DIR/backend"
