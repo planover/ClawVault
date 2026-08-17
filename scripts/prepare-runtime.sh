@@ -180,6 +180,20 @@ else
   fi
 fi
 
+# 2.5) 随包备份一份纯净 ELF（供 cmd/main 运行时自愈）
+#      fnOS 应用中心会按 fpk 文件名缓存；若用户未清干净 @appcenter 残留目录而装到旧包，
+#      或未来安装期对 node_modules 做了任何改写导致 .node 损坏，cmd/main 可从这份备份恢复。
+PRIS_DIR="$RT/sqlite3-pristine"
+mkdir -p "$PRIS_DIR"
+if is_elf "$BSQL_NODE"; then
+  cp "$BSQL_NODE" "$PRIS_DIR/better_sqlite3.node"
+  is_elf "$PRIS_DIR/better_sqlite3.node" || { echo "✗ 纯净备份写入失败" >&2; exit 1; }
+  echo "    ✓ 随包纯净备份: $PRIS_DIR/better_sqlite3.node ($(stat -c%s "$PRIS_DIR/better_sqlite3.node") bytes)"
+else
+  echo "✗ better-sqlite3 原生模块非法，无法生成纯净备份" >&2
+  exit 1
+fi
+
 # 3) 可选 ffmpeg 静态二进制（AMR 语音转码用，缺失不致命）
 if is_elf "$BIN_DIR/ffmpeg"; then
   echo "✓ ffmpeg 已存在且校验通过"

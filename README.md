@@ -90,13 +90,27 @@ bash scripts/prepare-runtime.sh
 # 2. 构建前端 + 后端 + 打包 fpk
 bash scripts/build-fpk.sh --check
 
-# 产物：dist-fpk/clawvault_1.0.18_x86_64.fpk
+# 产物：dist-fpk/clawvault_1.0.19_x86_64.fpk
 ```
 
 > 构建说明：
 > - 前端使用 `base=/app/clawvault/` 发布构建，保证资源路径与飞牛统一网关 `/app/clawvault` 一致。
 > - 后端依赖使用 `npm install --omit=dev --ignore-scripts`，并在 `app/runtime/` 中注入 Linux 原生 `better_sqlite3.node`，避免在 Windows/macOS 构建机拉错平台二进制。
+> - 随包在 `app/runtime/sqlite3-pristine/better_sqlite3.node` 额外备份一份经校验的 Linux ELF；`cmd/main` 启动前若发现 `node_modules` 内的 `.node` 被污染（如旧缓存残留），会自动从备份恢复，避免 `invalid ELF header` 启动失败。
 > - `ffmpeg` 为可选，仅用于 AMR 语音转 MP3；缺失时 SILK→WAV 仍可用纯 JS 解码，AMR 会保留原文件但不可播放。
+
+### 重要：升级前请先彻底清理旧残留
+
+飞牛应用中心会按 **fpk 文件名** 缓存安装包。若之前装过同名/旧版本但没清干净 `@appcenter` 残留目录，可能仍跑旧代码（表现为启动日志里版本号与已装版本不符，或依旧 `invalid ELF header`）。请严格按序：
+
+```bash
+# 1. 飞牛应用中心卸载 ClawVault
+# 2. SSH 到 NAS 删除所有残留（数据盘若是 /vol2 等请对应修改）
+sudo rm -rf /var/apps/clawvault /vol1/@appcenter/clawvault
+# 3. 重新「应用中心 → 离线安装」上传新 fpk
+```
+
+启动成功后，`main.log` 首行会打印包版本号，例如 `ClawVault v1.0.19 已启动 (pid ...)`，可据此确认 NAS 跑的是新包。
 
 ### 方式二：本地开发
 

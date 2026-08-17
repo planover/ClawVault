@@ -24,6 +24,20 @@ LOG_FILE="$LOG_DIR/main.log"
 SOCK="$APP_DIR/app.sock"
 GATEWAY_PREFIX="/app/clawvault"
 
+# 读取包版本号（manifest），用于启动日志「自证」——一眼判断 NAS 是否跑的是新包
+MANIFEST="$APP_DIR/manifest"
+PKG_VER="$(grep '^version=' "$MANIFEST" 2>/dev/null | head -1 | cut -d= -f2)"
+[ -z "$PKG_VER" ] && PKG_VER="?"
+
+# 判断文件是否为 Linux ELF（PE 是 MZ，HTML 是 <ht...）；用于 better-sqlite3 自愈校验
+is_elf() {
+  local f="$1"
+  [ -s "$f" ] || return 1
+  local head
+  head="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" || true
+  [ "$head" = "7f454c46" ]
+}
+
 # 确保内置二进制有执行位（部分打包/解压流程会丢失 +x 位，真机 Linux 上补回）
 chmod +x "$NODE_BIN" 2>/dev/null || true
 [ -d "$APP_DIR/runtime/bin" ] && find "$APP_DIR/runtime/bin" -maxdepth 1 -type f -exec chmod +x {} + 2>/dev/null || true
@@ -57,16 +71,34 @@ is_running() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
+# better-sqlite3 自愈：若 node_modules 内的 .node 非法（被旧缓存/残留目录污染），从随包纯净备份恢复
+ensure_sqlite3() {
+  local dst="$BACKEND_DIR/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+  local src="$APP_DIR/runtime/sqlite3-pristine/better_sqlite3.node"
+  if is_elf "$dst"; then return 0; fi
+  log "better-sqlite3 原生模块校验失败（非 Linux ELF），尝试从随包备份恢复..."
+  if [ -f "$src" ] && is_elf "$src"; then
+    mkdir -p "$(dirname "$dst")" 2>/dev/null || true
+    cp -f "$src" "$dst" 2>/dev/null || true
+    chmod +x "$dst" 2>/dev/null || true
+    if is_elf "$dst"; then
+      log "已从随包备份恢复 better_sqlite3.node"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 case "${1:-}" in
   start)
     if is_running; then
-      log "ClawVault 已在运行 (pid $(cat "$PID_FILE" 2>/dev/null))"
+      log "ClawVault v$PKG_VER 已在运行 (pid $(cat "$PID_FILE" 2>/dev/null))"
       exit 0
     fi
     [ -x "$NODE_BIN" ] || die "内置 Node 运行时缺失: $NODE_BIN（fpk 打包时未正确下载运行时？）"
     [ -f "$BACKEND_DIR/src/index.js" ] || die "后端入口缺失: $BACKEND_DIR/src/index.js"
-    if [ ! -f "$BACKEND_DIR/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
-      die "better-sqlite3 原生模块缺失（fpk 打包时未注入 linux 预编译？）"
+    if ! ensure_sqlite3; then
+      die "better-sqlite3 原生模块缺失或被污染且无法自愈（fpk 打包时未注入 linux 预编译？或 runtime/sqlite3-pristine 缺失？）"
     fi
     # 清理上次可能残留的 socket 文件
     rm -f "$SOCK" 2>/dev/null || true
@@ -88,7 +120,7 @@ case "${1:-}" in
     # 等待确认进程存活
     sleep 1
     if is_running; then
-      log "ClawVault 已启动 (pid $(cat "$PID_FILE" 2>/dev/null))  归档根: $ARCHIVE_ROOT"
+      log "ClawVault v$PKG_VER 已启动 (pid $(cat "$PID_FILE" 2>/dev/null))  归档根: $ARCHIVE_ROOT"
       exit 0
     else
       die "启动后进程未存活，详见 $LOG_FILE"
