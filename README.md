@@ -90,7 +90,7 @@ bash scripts/prepare-runtime.sh
 # 2. 构建前端 + 后端 + 打包 fpk
 bash scripts/build-fpk.sh --check
 
-# 产物：dist-fpk/clawvault_1.0.20_x86_64.fpk
+# 产物：dist-fpk/clawvault_1.0.21_x86_64.fpk
 ```
 
 > 构建说明：
@@ -111,7 +111,7 @@ sudo rm -rf /var/apps/clawvault /vol1/@appcenter/clawvault
 # 3. 重新「应用中心 → 离线安装」上传新 fpk
 ```
 
-启动成功后，`main.log` 首行会打印包版本号，例如 `ClawVault v1.0.20 已启动 (pid ...)`，可据此确认 NAS 跑的是新包。
+启动成功后，`main.log` 首行会打印包版本号，例如 `ClawVault v1.0.21 已启动 (pid ...)`，可据此确认 NAS 跑的是新包。
 
 ### 方式二：本地开发
 

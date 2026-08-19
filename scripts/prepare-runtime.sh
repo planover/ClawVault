@@ -25,6 +25,17 @@ set -euo pipefail
 cd "$(cd "$(dirname "$0")" && pwd)/.."
 REPO="$(pwd)"
 
+# 在仓库内创建临时目录，避免 Windows 沙箱 safe-delete 无法解析 Unix /tmp 绝对路径。
+# 退出/失败时尽量清理，但清理失败不应中断脚本。
+mkdir -p "$REPO/tmp"
+TMP_BASE="$REPO/tmp"
+cleanup_tmp() {
+  local d="$1"
+  if [ -n "$d" ] && [ -d "$d" ]; then
+    rm -rf "$d" 2>/dev/null || true
+  fi
+}
+
 NODE_VER="22.23.2"          # ABI 127，与 better-sqlite3 预编译 node-v127 对应
 BSQL_VER="11.10.0"          # 必须与 app/backend/package.json 中 better-sqlite3 版本一致
 FFMPEG_VER="6.1.1"          # 静态构建版本（可选）；eugeneware/ffmpeg-static 标签为 b6.1.1
@@ -44,6 +55,17 @@ is_elf() {
   local head
   head="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" || true
   [ "$head" = "7f454c46" ]
+}
+
+# 跨平台 tar 解压：Windows Git Bash 自带的 tar 常把 Unix 绝对路径（/c/Users/...）
+# 中的 ':' 解析为远程主机，导致 "Cannot connect to C: resolve failed"。
+# 通过 --force-local 强制按本地文件处理，并尽量在目标目录内用相对路径执行。
+tar_xzf() {
+  local force_local=''
+  case "$(uname -s)" in
+    MINGW*|CYGWIN*|MSYS*) force_local='--force-local' ;;
+  esac
+  tar $force_local -xzf "$@"
 }
 
 # 判断文件是否为 gzip（tar.gz 中间包）
@@ -96,7 +118,7 @@ fetch() {
         return 0
       fi
       echo "    ! 下载内容不是 Linux ELF: $url" >&2
-      rm -f "$out"
+      rm -f "$out" 2>/dev/null || true
     else
       # 中间包只需非空（tar.gz 会额外用 is_gzip 校验）
       if [ -s "$out" ]; then
@@ -104,7 +126,7 @@ fetch() {
         return 0
       fi
       echo "    ! 下载内容为空: $url" >&2
-      rm -f "$out"
+      rm -f "$out" 2>/dev/null || true
     fi
   done
   return 1
@@ -115,7 +137,7 @@ if is_elf "$NODE_DIR/bin/node"; then
   echo "✓ Node 运行时已存在且校验通过: $NODE_DIR/bin/node"
 else
   echo "==> 准备 Node v$NODE_VER linux-x64"
-  TMP="$(mktemp -d)"
+  TMP="$(mktemp -d "$TMP_BASE/prepare.XXXXXX")"
   if fetch "$TMP/node.tar.gz" \
       "https://cdn.npmmirror.com/binaries/node/v$NODE_VER/node-v$NODE_VER-linux-x64.tar.gz" \
       "https://mirrors.huaweicloud.com/nodejs/v$NODE_VER/node-v$NODE_VER-linux-x64.tar.gz" \
@@ -125,14 +147,17 @@ else
     # 解压到 $NODE_DIR（app/runtime/node），与 cmd/main 启动路径一致；--strip-components=1 去掉顶层 node-v*/ 前缀
     rm -rf "$NODE_DIR"
     mkdir -p "$NODE_DIR"
-    tar -xzf "$TMP/node.tar.gz" -C "$NODE_DIR" --strip-components=1 \
-      --exclude='bin/npm' --exclude='bin/npx' --exclude='bin/corepack' 2>/dev/null || true
+    # 进入目标目录内解压，避免 Windows tar 对 Unix 绝对路径 -C 解析失败
+    (
+      cd "$NODE_DIR" && tar_xzf "$TMP/node.tar.gz" --strip-components=1 \
+        --exclude='bin/npm' --exclude='bin/npx' --exclude='bin/corepack' 2>/dev/null || true
+    )
     chmod +x "$NODE_DIR/bin/node" 2>/dev/null || true
-    rm -rf "$TMP"
+    cleanup_tmp "$TMP"
     is_elf "$NODE_DIR/bin/node" || { echo "✗ Node 二进制不是 Linux ELF" >&2; exit 1; }
     echo "    ✓ Node 二进制已就位: $(stat -c%s "$NODE_DIR/bin/node") 字节"
   else
-    rm -rf "$TMP"
+    cleanup_tmp "$TMP"
     echo "✗ Node 下载失败，请检查网络或手动将 node.tar.gz 放入 .dl/ 后重试" >&2
     exit 1
   fi
@@ -148,7 +173,7 @@ else
   # 用 mv 移出仓库（而非 rm），避免 Windows safe-delete 守护拦截删除导致脚本中断
   [ -e "$BSQL_NODE" ] && mv -f "$BSQL_NODE" /tmp/bsql-stale-$$.node 2>/dev/null || true
   mkdir -p "$BSQL_DIR/build/Release"
-  TMP="$(mktemp -d)"
+  TMP="$(mktemp -d "$TMP_BASE/prepare.XXXXXX")"
   BSQL_TAR="better-sqlite3-v$BSQL_VER-node-v127-linux-x64.tar.gz"
   BSQL_URL="https://github.com/WiseLibs/better-sqlite3/releases/download/v$BSQL_VER/$BSQL_TAR"
   if fetch "$TMP/bsql.tar.gz" \
@@ -158,24 +183,27 @@ else
     # 中间 tar.gz 额外校验 gzip 头，避免拿到 HTML
     if ! is_gzip "$TMP/bsql.tar.gz"; then
       echo "✗ better-sqlite3 下载包不是 gzip（可能是 HTML 错误页）" >&2
-      rm -rf "$TMP"
+      cleanup_tmp "$TMP"
       exit 1
     fi
-    tar -xzf "$TMP/bsql.tar.gz" -C "$TMP"
+    # 在临时目录内用相对路径解压，避免 Windows tar 对 Unix 绝对路径解析失败
+    (
+      cd "$TMP" && tar_xzf bsql.tar.gz
+    )
     NODE_BIN_FOUND="$(find "$TMP" -name 'better_sqlite3.node' | head -1)"
     if [ -n "$NODE_BIN_FOUND" ]; then
       cp "$NODE_BIN_FOUND" "$BSQL_NODE"
-      rm -rf "$TMP"
+      cleanup_tmp "$TMP"
       is_elf "$BSQL_NODE" || { echo "✗ better_sqlite3.node 不是 Linux ELF" >&2; exit 1; }
       echo "    ✓ better_sqlite3.node ($(stat -c%s "$BSQL_NODE") bytes)"
     else
       echo "    ✗ 预编译包内未找到 better_sqlite3.node" >&2
-      rm -rf "$TMP"
+      cleanup_tmp "$TMP"
       exit 1
     fi
   else
     echo "    ✗ better-sqlite3 预编译下载失败，请手动将 $BSQL_TAR 放入 .dl/ 后重试" >&2
-    rm -rf "$TMP"
+    cleanup_tmp "$TMP"
     exit 1
   fi
 fi
@@ -199,8 +227,8 @@ if is_elf "$BIN_DIR/ffmpeg"; then
   echo "✓ ffmpeg 已存在且校验通过"
 else
   echo "==> 准备静态 ffmpeg (可选)"
-  rm -f "$BIN_DIR/ffmpeg"
-  TMP="$(mktemp -d)"
+  rm -f "$BIN_DIR/ffmpeg" 2>/dev/null || true
+  TMP="$(mktemp -d "$TMP_BASE/prepare.XXXXXX")"
   FFMPEG_URL="https://github.com/eugeneware/ffmpeg-static/releases/download/b$FFMPEG_VER/ffmpeg-linux-x64"
   # ffmpeg 是最终 ELF 二进制，使用 --elf 校验
   if fetch --elf "$TMP/ffmpeg" \
@@ -214,7 +242,7 @@ else
   else
     echo "    ! ffmpeg 下载失败，跳过（AMR 语音将不可播放，SILK 不受影响）"
   fi
-  rm -rf "$TMP"
+  cleanup_tmp "$TMP"
 fi
 
 echo "==> 运行时准备完成: $RT"

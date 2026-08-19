@@ -63,12 +63,20 @@ log() {
   printf '%s\n' "$*" >> "$LOG_FILE" 2>/dev/null || true
   printf '%s\n' "$*"
 }
-die() {
+err() {
   printf '%s\n' "ClawVault: $*" >> "$LOG_FILE" 2>/dev/null || true
   if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
     printf '%s\n' "ClawVault: $*" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
   fi
   printf '%s\n' "ClawVault: $*" >&2
+}
+die() {
+  err "$*"
+  # 若 Node 已经写过 stderr 到日志，把最后几行一并带到 TRIM_TEMP_LOGFILE
+  if [ -s "$LOG_FILE" ] && [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '\n--- 启动日志尾部 ---\n' >> "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+    tail -n 20 "$LOG_FILE" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+  fi
   exit 1
 }
 
@@ -107,6 +115,22 @@ case "${1:-}" in
     if ! ensure_sqlite3; then
       die "better-sqlite3 原生模块缺失或被污染且无法自愈（fpk 打包时未注入 linux 预编译？或 runtime/sqlite3-pristine 缺失？）"
     fi
+    # 启动前诊断：记录运行环境，帮助定位「本地应用启动失败」
+    log "--- 启动诊断 ---"
+    log "应用根目录: $APP_DIR"
+    log "Node 路径: $NODE_BIN"
+    log "后端入口: $BACKEND_DIR/src/index.js"
+    log "数据目录: $DATA_DIR"
+    log "归档根目录: $ARCHIVE_ROOT"
+    log "当前用户: $(id -un 2>/dev/null || echo 'unknown')"
+    log "当前组: $(id -gn 2>/dev/null || echo 'unknown')"
+    log "PATH: $PATH"
+    log "LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-<unset>}"
+    # 预检 Node 能否执行（可发现 glibc 不兼容等运行时缺失）
+    NODE_VERSION_OUT="$($NODE_BIN --version 2>&1)" || {
+      die "内置 Node 无法执行: $NODE_BIN（常见原因：NAS glibc 版本过低，不满足 Node 22 要求；或二进制损坏）\n预检输出: $NODE_VERSION_OUT"
+    }
+    log "Node 预检通过: $NODE_VERSION_OUT"
     # 清理上次可能残留的 socket 文件
     rm -f "$SOCK" 2>/dev/null || true
     # 把 runtime/bin（含可选 ffmpeg）加入 PATH，供语音转码使用
@@ -124,13 +148,24 @@ case "${1:-}" in
     DEMO_MODE="${DEMO_MODE:-false}" \
     nohup "$NODE_BIN" "$BACKEND_DIR/src/index.js" >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
-    # 等待确认进程存活
-    sleep 1
-    if is_running; then
+    # 等待确认进程存活且 socket 文件出现（最多 5 秒）
+    started=false
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 0.5
+      if is_running; then
+        if [ -S "$SOCK" ] || [ "$i" -ge 6 ]; then
+          started=true
+          break
+        fi
+      else
+        break
+      fi
+    done
+    if [ "$started" = "true" ]; then
       log "ClawVault v$PKG_VER 已启动 (pid $(cat "$PID_FILE" 2>/dev/null))  归档根: $ARCHIVE_ROOT"
       exit 0
     else
-      die "启动后进程未存活，详见 $LOG_FILE"
+      die "启动后进程未存活或 socket 未就绪，详见 $LOG_FILE"
     fi
     ;;
   stop)

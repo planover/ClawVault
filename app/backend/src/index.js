@@ -296,6 +296,17 @@ if (config.socketPath) {
   server.listen(config.port, onListening);
 }
 
+// 全局未捕获异常：记录到 stderr 并尽量保持进程运行，便于在 NAS 日志中定位启动/运行时崩溃。
+process.on('uncaughtException', (err) => {
+  console.error('[ClawVault] 未捕获异常:', err?.message || err);
+  console.error(err?.stack || '');
+  // 启动阶段的未捕获异常通常意味着服务不可用，安全退出并依赖 cmd/main 重启逻辑
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[ClawVault] 未处理的 Promise 拒绝:', reason?.message || reason);
+});
+
 // 演示模式：Mock 一个 bot 通道，定时注入样本消息，验证「接收→分类→落盘→UI」全链路
 function startDemoMode() {
   const demoChannel = { id: 'demo', name: '演示Bot' };

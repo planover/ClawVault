@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: app/backend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: app/frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Build fpk
+        run: |
+          set -euo pipefail
+          bash scripts/prepare-runtime.sh
+          bash scripts/build-fpk.sh --check
+
+      - name: Read version from manifest
+        id: ver
+        run: |
+          VER="$(grep '^version=' manifest | head -1 | cut -d= -f2)"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ClawVault v${{ steps.ver.outputs.version }}
+          files: dist-fpk/clawvault_${{ steps.ver.outputs.version }}_x86_64.fpk
+          generate_release_notes: true
