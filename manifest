@@ -1,5 +1,5 @@
 appname=clawvault
-version=1.0.21
+version=1.0.23
 display_name="ClawVault（爪匣）"
 desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
@@ -18,10 +18,13 @@ distributor=planover
 distributor_url=https://github.com/planover/ClawVault
 os_min_version=1.1.3100
 ctl_stop=true
-desktop_uidir=ui
+checkport=false
+desktop_uidir=
 desktop_applaunchname="clawvault.Application"
 disable_authorization_path=false
-changelog="""1.0.21：增强 cmd/main 启动诊断与容错。①启动前记录应用根目录、Node 路径、当前用户/组、PATH、LD_LIBRARY_PATH 等环境信息；②用 `node --version` 预检内置 Node 是否可执行，提前暴露 glibc 不兼容/二进制损坏问题；③启动后循环检测进程存活与 socket 文件就绪（最长 5 秒），并把失败时的启动日志尾部自动回显到 fnOS 错误通道，便于用户在 NAS 报错面板直接看到根因。若仍失败，请 SSH 到 NAS 执行 `sudo cat /var/apps/clawvault/var/main.log | tail -40`。
+changelog="""1.0.23：修复去 Docker 原生化后「本地应用启动失败 / 打开应用显示占位文本」问题。cmd/main 以内置 Node 在应用根目录启动后端，而 backend/src/index.js 此前用 `process.cwd()` 定位 `public/` 前端产物目录，导致实际运行时找不到已构建的 index.html，返回「Build the frontend...」占位页，飞牛在启用阶段判为启动失败。改为按模块文件位置（`__dirname`）推导 public 路径；cmd/main 同时传入 `APP_DIR` 环境变量，使版本号读取跟随真实部署目录。
+1.0.22：修复 fnOS 无法识别应用入口类型的问题。将 `app/ui/config` 的 `type` 由不被识别的 `iframe` 改为 `url`（参照正常应用 Online3DViewer），`url` 带尾斜杠 `/app/clawvault/`；manifest 补齐 `checkport=false`（Unix Socket 不监听 TCP 端口，避免 fnOS 默认端口检查误判）、清空 `desktop_uidir`，使飞牛能正确创建桌面入口并通过启用检测。
+1.0.21：增强 cmd/main 启动诊断与容错。①启动前记录应用根目录、Node 路径、当前用户/组、PATH、LD_LIBRARY_PATH 等环境信息；②用 `node --version` 预检内置 Node 是否可执行，提前暴露 glibc 不兼容/二进制损坏问题；③启动后循环检测进程存活与 socket 文件就绪（最长 5 秒），并把失败时的启动日志尾部自动回显到 fnOS 错误通道，便于用户在 NAS 报错面板直接看到根因。若仍失败，请 SSH 到 NAS 执行 `sudo cat /var/apps/clawvault/var/main.log | tail -40`。
 1.0.19：原生包「自愈 + 版本自证」强化。①运行时自愈：随包在 runtime/sqlite3-pristine/ 备份一份经校验的 Linux ELF better_sqlite3.node；cmd/main 启动前若发现 node_modules 内的 .node 非法（被旧缓存 / 残留目录污染），自动从备份恢复，避免 invalid ELF header 启动失败。②启动日志打印包版本号（ClawVault vX.Y.Z 已启动），便于一眼确认 NAS 是否跑的是新包。③因飞牛应用中心按 fpk 文件名缓存，再次升版本号以彻底绕开 1.0.18 及更早的同名 / 旧缓存；升级前务必先卸载旧版并删除 /var/apps/clawvault 与 /vol1/@appcenter/clawvault 残留目录再离线安装。
 1.0.18：修复 fpk 内置 better-sqlite3 原生模块误打包 Windows PE 而非 Linux ELF 的问题。上一版（1.0.17）因构建机残留 Windows 版 better_sqlite3.node，真机加载报 invalid ELF header 启动失败；本版在打包脚本中强制校验并注入 Linux ELF，且升级版本号以绕过飞牛应用中心对同名 fpk 的缓存。注意：升级前需先在飞牛应用中心卸载旧版本并删除 /var/apps/clawvault、/vol1/@appcenter/clawvault 残留目录后重新离线安装。
 1.0.17：归档落盘重构——让文件能直接在飞牛浏览。此前媒体真实文件被统一塞进 [通道]/媒体/ 隐藏目录、分类目录里只剩说明用的 Markdown 卡片，导致飞牛相册/文件管理器无法直接预览。现改为：图片→[通道]/图片/、文件→[通道]/文件/（保留原始文件名）、视频→[通道]/视频/、语音→[通道]/语音/，落盘即真实原文件，可用飞牛直接打开；图片/视频文件名采用消息文字摘要做后缀；同通道内容相同的文件按 SHA-256 自动去重只存一份，避免重复占用空间；旧版本遗留的 媒体/ 目录文件启动时自动迁移到对应类型目录，并清理无用的 Markdown 卡片。另修复一处生产调用遗漏（index.js 未向 saveMedia 透传 kind/text，会导致全部媒体落入默认目录）。

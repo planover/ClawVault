@@ -90,7 +90,7 @@ bash scripts/prepare-runtime.sh
 # 2. 构建前端 + 后端 + 打包 fpk
 bash scripts/build-fpk.sh --check
 
-# 产物：dist-fpk/clawvault_1.0.21_x86_64.fpk
+# 产物：dist-fpk/clawvault_1.0.23_x86_64.fpk
 ```
 
 > 构建说明：
@@ -111,7 +111,7 @@ sudo rm -rf /var/apps/clawvault /vol1/@appcenter/clawvault
 # 3. 重新「应用中心 → 离线安装」上传新 fpk
 ```
 
-启动成功后，`main.log` 首行会打印包版本号，例如 `ClawVault v1.0.21 已启动 (pid ...)`，可据此确认 NAS 跑的是新包。
+启动成功后，`main.log` 会打印包版本号，例如 `ClawVault v1.0.23 已启动 (pid ...)`，可据此确认 NAS 跑的是新包。
 
 ### 方式二：本地开发
 
@@ -137,6 +137,8 @@ cd app/frontend && npm install && npm run dev
 4. **通道管理**：进入「通道管理」添加通道并绑定你的 bot；支持微信 ClawBot、Telegram、Webhook、钉钉/飞书/企微、Discord/Slack 等。
 
 > 首次打开时若提示「无法启用 clawvault / 本地应用启动失败」：
+> - 若 `main.log` 已打印 `ClawVault vX.Y.Z 已启动`、socket 存在且 curl 正常返回，但仍被 fnOS 判为启动失败，优先检查 `app/ui/config`：[`type` 必须是 `"url"`](./app/ui/config)、`url` 带尾斜杠、`manifest` 含 `checkport=false` 且 `desktop_uidir` 为空。
+> - 若应用能启用但打开后显示「ClawVault backend running. Build the frontend...」，是后端启动时工作目录不是 `backend/`，导致 `process.cwd()` 找不到前端产物 `public/`。应改用模块文件位置推导 public 路径（已随 v1.0.23 修复）。
 > - 若 `main.log` 出现 `bad interpreter` 或 `^M` 相关错误，是 `cmd/main` 换行符为 CRLF，需以 LF 重新打包。
 > - 若 `main.log` 出现 `better_sqlite3.node: invalid ELF header`，是打包时误将 Windows 版原生模块混入 fpk，需重新运行 `bash scripts/build-fpk.sh --check`，确保注入的是 Linux ELF。
 > - 本仓库构建脚本已通过 `.gitattributes` 强制 LF、并在打包前清理并重新注入 Linux 原生二进制。

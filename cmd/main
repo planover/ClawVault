@@ -137,6 +137,7 @@ case "${1:-}" in
     RUNTIME_BIN="$APP_DIR/runtime/bin"
     PATH="$RUNTIME_BIN:$PATH"
     export PATH
+    APP_DIR="$APP_DIR" \
     SOCKET_PATH="$SOCK" \
     GATEWAY_PREFIX="$GATEWAY_PREFIX" \
     ARCHIVE_ROOT="$ARCHIVE_ROOT" \

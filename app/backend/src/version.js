@@ -8,14 +8,17 @@ import { fileURLToPath } from 'node:url';
 export function readManifestVersion() {
   const envVer = process.env.CLAWVAULT_VERSION?.trim();
   if (envVer) return envVer;
+  const appDir = process.env.APP_DIR;
   const candidates = [
     '/app/manifest', // Docker 镜像内 manifest 落点
+    appDir ? path.join(appDir, 'manifest') : null, // 部署态：cmd/main 传入的应用根
+    '/var/apps/clawvault/manifest', // fnOS 控制目录（实际部署时常在此）
     fileURLToPath(new URL('../../../../manifest', import.meta.url)), // 仓库态 app/backend/src → 仓库根
     fileURLToPath(new URL('../../../manifest', import.meta.url)), // 部署态 backend/src → 应用根
     path.resolve(process.cwd(), '..', 'manifest'),
     path.resolve(process.cwd(), '..', '..', 'manifest'),
     path.resolve(process.cwd(), 'manifest'),
-  ];
+  ].filter(Boolean);
   for (const p of candidates) {
     try {
       const txt = fs.readFileSync(p, 'utf8');

@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import config from './config.js';
 import { ChannelManager } from './manager.js';
 import { Storage } from './storage.js';
@@ -238,7 +239,10 @@ app.post('/api/inbound/:id/:sub?', async (req, res) => {
   }
 });
 
-const publicDir = path.join(process.cwd(), 'public');
+// 部署态 cwd 是应用根（如 /vol1/@appcenter/clawvault），不是 backend/src，
+// 因此不能用 process.cwd() 找 public；改用本模块文件位置推导。
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.resolve(__dirname, '..', 'public');
 if (fs.existsSync(publicDir)) {
   app.use(express.static(publicDir));
   app.get('*', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
