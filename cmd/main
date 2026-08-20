@@ -23,16 +23,27 @@ fi
 RT_DIR="$APP_DIR/runtime/node"
 NODE_BIN="$RT_DIR/bin/node"
 BACKEND_DIR="$APP_DIR/backend"
-PID_FILE="$APP_DIR/var/clawvault.pid"
-LOG_DIR="${TRIM_PKGVAR:-$APP_DIR/var}"
+# 运行时可写数据统一放到 fnOS 数据共享目录（属主为包专用用户，可写）。
+# 切勿写到安装目录 $APP_DIR/var：安装目录由 root 解包，包用户(clawvault)无写权限，
+# 会导致 cmd/main 写不了 pid/log、后端写不了 SQLite，fnOS 判定「本地应用启动失败」。
+DATA_SHARE="${TRIM_DATA_SHARE:-}"
+[ -z "$DATA_SHARE" ] && DATA_SHARE="$(printf '%s' "${TRIM_DATA_SHARE_PATHS:-}" | cut -d: -f1)"
+[ -z "$DATA_SHARE" ] && DATA_SHARE="/vol1/@appdata/clawvault"
+[ -d "$DATA_SHARE" ] || mkdir -p "$DATA_SHARE" 2>/dev/null || true
+LOG_DIR="$DATA_SHARE"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/main.log"
+PID_FILE="$DATA_SHARE/clawvault.pid"
 # 统一网关 Socket：ui/config 中 gatewaySocket="app.sock"，fnOS 在 ${TRIM_APPDEST}/app.sock 处连接
 SOCK="$APP_DIR/app.sock"
 GATEWAY_PREFIX="/app/clawvault"
 
 # 读取包版本号（manifest），用于启动日志「自证」——一眼判断 NAS 是否跑的是新包
-MANIFEST="$APP_DIR/manifest"
+# manifest 可能位于安装根($APP_DIR)或控制目录(/var/apps/clawvault)，两处都探测
+MANIFEST=""
+for _m in "$APP_DIR/manifest" "/var/apps/clawvault/manifest"; do
+  [ -f "$_m" ] && MANIFEST="$_m" && break
+done
 PKG_VER="$(grep '^version=' "$MANIFEST" 2>/dev/null | head -1 | cut -d= -f2)"
 [ -z "$PKG_VER" ] && PKG_VER="?"
 
@@ -49,8 +60,8 @@ is_elf() {
 chmod +x "$NODE_BIN" 2>/dev/null || true
 [ -d "$APP_DIR/runtime/bin" ] && find "$APP_DIR/runtime/bin" -maxdepth 1 -type f -exec chmod +x {} + 2>/dev/null || true
 
-# 持久数据（SQLite DB / settings / channels.json）放在 var 目录，重启后保留
-DATA_DIR="$LOG_DIR"
+# 持久数据（SQLite DB / settings / channels.json / vault 密钥）放在数据共享目录，重启后保留
+DATA_DIR="$DATA_SHARE"
 
 # 归档根目录：取 config/resource 声明的 data-share 第一个挂载路径
 SHARE_PATHS="${TRIM_DATA_SHARE_PATHS:-}"

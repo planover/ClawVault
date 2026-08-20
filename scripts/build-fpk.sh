@@ -65,6 +65,7 @@ rm -f app.tgz 2>/dev/null || true
     --exclude='node_modules/.cache' \
     --exclude='*/test' --exclude='tests' \
     --exclude='data' --exclude='archive' --exclude='*.log' \
+    --exclude='var' --exclude='*/var' \
     backend ui runtime )
 echo "    ✓ app.tgz ($(stat -c%s app.tgz) bytes)"
 
