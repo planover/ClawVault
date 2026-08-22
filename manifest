@@ -1,5 +1,5 @@
 appname=clawvault
-version=1.0.24
+version=1.0.25
 display_name="ClawVault（爪匣）"
 desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
@@ -22,7 +22,8 @@ checkport=false
 desktop_uidir=
 desktop_applaunchname="clawvault.Application"
 disable_authorization_path=false
-changelog="""1.0.24：修复「本地应用启动失败」的深层根因——运行时目录属主。fnOS 以专用用户（clawvault，run-as=package）运行应用，但此前 cmd/main 把日志/pid/SQLite 都写到安装目录内的 $APP_DIR/var，而安装目录由 root 解包、包用户无写权限（fpk 自带 var/ 时更会直接是 root 属主），导致 cmd/main 写不了 pid/log、后端写不了数据库，is_running 永远为假、status 返回「stopped」，飞牛据此判启动失败。本版把运行时可写数据（main.log / clawvault.pid / archive.db / settings.json / vault 密钥）统一改到 fnOS 数据共享目录 /vol1/@appdata/clawvault（由 manifest 的 config/resource data-share 声明、属主即包用户、可写）。同时 manifest 探测兼容控制目录 /var/apps/clawvault/manifest，使启动日志版本号正确显示。注意：这是最彻底的根治，建议卸载旧版并删除 /var/apps/clawvault 与 /vol1/@appcenter/clawvault 残留目录后离线安装本版。
+changelog="""1.0.25：前端体验与稳定性优化（P0/P1/P2）。P0：API 请求增加 res.ok 校验、15s 超时与可读错误；WebSocket 改为单例重连守卫，修复断网抖动时重连定时器堆积导致的 CPU/内存泄漏。P1：新增后端缩略图接口 /api/media/thumb/:id（jimp 纯 JS，失败自动回退原图），前端列表/详情改用缩略图以降低带宽与首屏耗时；WebSocket 消息事件改为 800ms 防抖合并刷新，不再每条消息全量拉取；删除通道增加二次确认；右侧空状态增加插画与引导文案。P2：新增深色模式（语义化 CSS 变量 + 头部切换、localStorage 记忆、默认跟随系统）、全局错误提示条；组件硬编码颜色统一收敛到 --c-* 变量。注意：本次新增后端依赖 jimp，而 fnOS 升级为「目录合并」不会覆盖旧 node_modules，若缩略图不生效请在飞牛应用中心卸载并删除 /var/apps/clawvault 与 /vol1/@appcenter/clawvault 后离线安装本版（数据目录 /vol1/@appdata/clawvault 不受影响，归档不会丢失）。
+1.0.24：修复「本地应用启动失败」的深层根因——运行时目录属主。fnOS 以专用用户（clawvault，run-as=package）运行应用，但此前 cmd/main 把日志/pid/SQLite 都写到安装目录内的 $APP_DIR/var，而安装目录由 root 解包、包用户无写权限（fpk 自带 var/ 时更会直接是 root 属主），导致 cmd/main 写不了 pid/log、后端写不了数据库，is_running 永远为假、status 返回「stopped」，飞牛据此判启动失败。本版把运行时可写数据（main.log / clawvault.pid / archive.db / settings.json / vault 密钥）统一改到 fnOS 数据共享目录 /vol1/@appdata/clawvault（由 manifest 的 config/resource data-share 声明、属主即包用户、可写）。同时 manifest 探测兼容控制目录 /var/apps/clawvault/manifest，使启动日志版本号正确显示。注意：这是最彻底的根治，建议卸载旧版并删除 /var/apps/clawvault 与 /vol1/@appcenter/clawvault 残留目录后离线安装本版。
 1.0.23：修复去 Docker 原生化后「本地应用启动失败 / 打开应用显示占位文本」问题。cmd/main 以内置 Node 在应用根目录启动后端，而 backend/src/index.js 此前用 `process.cwd()` 定位 `public/` 前端产物目录，导致实际运行时找不到已构建的 index.html，返回「Build the frontend...」占位页，飞牛在启用阶段判为启动失败。改为按模块文件位置（`__dirname`）推导 public 路径；cmd/main 同时传入 `APP_DIR` 环境变量，使版本号读取跟随真实部署目录。
 1.0.22：修复 fnOS 无法识别应用入口类型的问题。将 `app/ui/config` 的 `type` 由不被识别的 `iframe` 改为 `url`（参照正常应用 Online3DViewer），`url` 带尾斜杠 `/app/clawvault/`；manifest 补齐 `checkport=false`（Unix Socket 不监听 TCP 端口，避免 fnOS 默认端口检查误判）、清空 `desktop_uidir`，使飞牛能正确创建桌面入口并通过启用检测。
 1.0.21：增强 cmd/main 启动诊断与容错。①启动前记录应用根目录、Node 路径、当前用户/组、PATH、LD_LIBRARY_PATH 等环境信息；②用 `node --version` 预检内置 Node 是否可执行，提前暴露 glibc 不兼容/二进制损坏问题；③启动后循环检测进程存活与 socket 文件就绪（最长 5 秒），并把失败时的启动日志尾部自动回显到 fnOS 错误通道，便于用户在 NAS 报错面板直接看到根因。若仍失败，请 SSH 到 NAS 执行 `sudo cat /var/apps/clawvault/var/main.log | tail -40`。
