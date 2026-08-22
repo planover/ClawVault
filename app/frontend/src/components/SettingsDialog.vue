@@ -158,16 +158,16 @@ async function testAI() {
   display: block;
   font-size: 12px;
   margin: 12px 0 4px;
-  color: #4b5563;
+  color: var(--c-text-2);
 }
 .test {
   font-size: 12px;
   font-weight: 600;
 }
 .test.ok {
-  color: #15803d;
+  color: var(--c-success-text);
 }
 .test.fail {
-  color: #b91c1c;
+  color: var(--c-danger);
 }
 </style>

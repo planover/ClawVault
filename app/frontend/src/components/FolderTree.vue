@@ -75,11 +75,11 @@ function isSel(o) {
 }
 .sub {
   padding-left: 28px;
-  color: #4b5563;
+  color: var(--c-text-2);
 }
 .active {
-  background: #eef2ff;
-  color: #2563eb;
+  background: var(--c-active);
+  color: var(--c-primary);
 }
 .muted {
   font-size: 11px;

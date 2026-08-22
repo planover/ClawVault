@@ -19,8 +19,30 @@ const showChannels = ref(false);
 const showSettings = ref(false);
 const showAbout = ref(false);
 const detailImgFailed = ref(false);
+const error = ref(''); // 全局错误提示条（替代无感知的静默失败）
 const newCat = ref('');
 const newSub = ref('');
+
+// 深色模式：默认尊重系统偏好，用户手动切换后存 localStorage
+const THEME_KEY = 'clawvault-theme';
+const theme = ref(
+  (() => {
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved === 'dark' || saved === 'light') return saved;
+    } catch {}
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  })()
+);
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  theme.value = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch {}
+}
+function toggleTheme() {
+  applyTheme(theme.value === 'dark' ? 'light' : 'dark');
+}
+applyTheme(theme.value); // 尽早应用，避免首屏闪烁
 
 const loading = ref(false);
 const loadingMore = ref(false);
@@ -74,6 +96,8 @@ async function loadMessages(reset = true) {
     const r = await api.listMessages(q);
     total.value = r.total;
     messages.value = reset ? r.items : messages.value.concat(r.items);
+  } catch (e) {
+    error.value = '消息加载失败：' + (e.message || e);
   } finally {
     loading.value = false;
     loadingMore.value = false;
@@ -132,18 +156,34 @@ function toggleSide() {
 
 async function doReclassify() {
   if (!selectedMessage.value || !newCat.value) return;
-  await api.reclassify(selectedMessage.value.id, newCat.value, newSub.value);
-  selectedMessage.value = { ...selectedMessage.value, category: newCat.value, sub: newSub.value };
-  await loadMessages(true);
-  await loadFolders();
+  try {
+    await api.reclassify(selectedMessage.value.id, newCat.value, newSub.value);
+    selectedMessage.value = { ...selectedMessage.value, category: newCat.value, sub: newSub.value };
+    await loadMessages(true);
+    await loadFolders();
+  } catch (e) {
+    error.value = '重新分类失败：' + (e.message || e);
+  }
 }
 
-function onWSEvent(e) {
-  if (e.type === 'message' || e.type === 'reclassify') {
+// WS 推送的事件处理：避免每次 message 事件都全量拉取，改为防抖合并刷新，
+// 只刷新“消息列表 + 分类树”（聊天归档是 xlsx 导出，变化频率低，不随每条消息刷新）。
+let refreshTimer = null;
+function scheduleRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
     loadMessages(true);
     loadFolders();
-    loadChats();
-    if (e.type === 'reclassify' && selectedMessage.value && e.record.id === selectedMessage.value.id) {
+  }, 800);
+}
+function onWSEvent(e) {
+  if (e.type === 'message') {
+    scheduleRefresh();
+  } else if (e.type === 'reclassify') {
+    loadMessages(true);
+    loadFolders();
+    if (selectedMessage.value && e.record.id === selectedMessage.value.id) {
       selectedMessage.value = e.record;
       newCat.value = e.record.category;
       newSub.value = e.record.sub;
@@ -154,13 +194,21 @@ function onWSEvent(e) {
 }
 
 async function loadChannels() {
-  channels.value = await api.listChannels();
+  try {
+    channels.value = await api.listChannels();
+  } catch (e) {
+    error.value = '通道加载失败：' + (e.message || e);
+  }
 }
 // 通道变更（新增/删除/重命名）后，同步刷新侧栏与聊天归档列表
 async function onChannelsChanged() {
-  await loadChannels();
-  await loadFolders();
-  await loadChats();
+  try {
+    await loadChannels();
+    await loadFolders();
+    await loadChats();
+  } catch (e) {
+    error.value = '通道变更同步失败：' + (e.message || e);
+  }
 }
 async function loadChats() {
   try {
@@ -170,7 +218,11 @@ async function loadChats() {
   }
 }
 async function loadFolders() {
-  folders.value = await api.folders();
+  try {
+    folders.value = await api.folders();
+  } catch (e) {
+    error.value = '分类加载失败：' + (e.message || e);
+  }
 }
 
 onMounted(() => {
@@ -193,7 +245,14 @@ onMounted(() => {
       <button class="btn ghost" aria-label="通道管理" @click="showChannels = true">通道 ({{ channels.length }})</button>
       <button class="btn ghost" aria-label="关于" @click="showAbout = true">关于</button>
       <button class="btn ghost" aria-label="设置" @click="showSettings = true">设置</button>
+      <button class="icon-btn theme-btn" :aria-label="theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'" :title="theme === 'dark' ? '浅色模式' : '深色模式'" @click="toggleTheme">{{ theme === 'dark' ? '☀️' : '🌙' }}</button>
     </header>
+
+    <div v-if="error" class="errbar" role="alert">
+      <span class="errbar-ico">⚠️</span>
+      <span class="errbar-msg">{{ error }}</span>
+      <button class="errbar-close" aria-label="关闭提示" @click="error = ''">✕</button>
+    </div>
 
     <div class="body">
       <!-- 移动端侧栏遮罩 -->
@@ -268,7 +327,7 @@ onMounted(() => {
         <div class="content">{{ selectedMessage.text }}</div>
         <div v-if="(selectedMessage.kind === 'image' || selectedMessage.kind === 'sticker') && selectedMessage.media" class="media">
           <div class="muted small">{{ selectedMessage.kind === 'sticker' ? '表情' : '图片' }}</div>
-          <img v-if="!detailImgFailed" :src="api.mediaUrl(selectedMessage.id)" alt="图片" @error="detailImgFailed = true" />
+          <img v-if="!detailImgFailed" :src="api.thumbUrl(selectedMessage.id, 800)" alt="图片" @error="detailImgFailed = true" />
           <div v-else class="muted small">🖼️ 媒体加载失败</div>
         </div>
         <div v-else-if="selectedMessage.kind === 'video' && selectedMessage.media" class="media">
@@ -298,7 +357,11 @@ onMounted(() => {
         </div>
       </section>
       <section class="detail empty" :class="{ open: showDetail }" v-else>
-        <div class="muted">选择左侧分类或消息查看详情</div>
+        <div class="empty-state">
+          <div class="empty-ico" aria-hidden="true">🗂️</div>
+          <div class="empty-title">还没有选择消息</div>
+          <p class="muted">从左侧分类或消息列表中挑一条，这里会显示消息内容、媒体文件，并支持重新分类。</p>
+        </div>
       </section>
     </div>
 
@@ -422,6 +485,61 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.empty-state {
+  text-align: center;
+  padding: 24px;
+  max-width: 240px;
+}
+.empty-ico {
+  font-size: 42px;
+  line-height: 1;
+  margin-bottom: 12px;
+  opacity: 0.85;
+}
+.empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--c-text);
+  margin-bottom: 8px;
+}
+.empty-state .muted {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 全局错误提示条 */
+.errbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--c-danger-bg);
+  border-bottom: 1px solid var(--c-danger-border);
+  color: var(--c-danger);
+  font-size: 13px;
+  z-index: 31;
+}
+.errbar-ico {
+  flex-shrink: 0;
+}
+.errbar-msg {
+  flex: 1;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.errbar-close {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--c-danger);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.errbar-close:hover {
+  background: var(--c-danger-border);
 }
 .detail .meta {
   display: flex;

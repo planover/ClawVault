@@ -50,7 +50,7 @@ function toggleVoice(id) {
       </div>
       <!-- 图片 / 表情：统一走媒体渲染，加载失败显示占位 -->
       <div v-if="(m.kind === 'image' || m.kind === 'sticker') && m.media" class="thumb">
-        <img v-if="!imgFailed[m.id]" :src="api.mediaUrl(m.id)" loading="lazy" alt="图片" @error="imgFailed[m.id] = true" />
+        <img v-if="!imgFailed[m.id]" :src="api.thumbUrl(m.id, 320)" loading="lazy" decoding="async" alt="图片" @error="imgFailed[m.id] = true" />
         <div v-else class="muted small">🖼️ 媒体加载失败</div>
       </div>
       <div v-else-if="(m.kind === 'image' || m.kind === 'sticker') && !m.media" class="muted small">
@@ -83,20 +83,20 @@ function toggleVoice(id) {
 }
 .item {
   padding: 10px 12px;
-  border-bottom: 1px solid #eef0f3;
+  border-bottom: 1px solid var(--c-border);
   cursor: pointer;
   transition: background 0.15s;
 }
 .item:hover {
-  background: #fafbff;
+  background: var(--c-card);
 }
 .item:focus-visible {
-  outline: 2px solid #2563eb;
+  outline: 2px solid var(--c-primary);
   outline-offset: -2px;
-  background: #fafbff;
+  background: var(--c-card);
 }
 .item.active {
-  background: #eef2ff;
+  background: var(--c-active);
 }
 .meta {
   display: flex;
@@ -107,7 +107,7 @@ function toggleVoice(id) {
 }
 .text {
   font-size: 13px;
-  color: #374151;
+  color: var(--c-text-2);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -122,7 +122,7 @@ function toggleVoice(id) {
   max-width: 100%;
   max-height: 160px;
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--c-border);
 }
 .voice-row {
   margin-bottom: 6px;
@@ -145,7 +145,7 @@ function toggleVoice(id) {
   font-size: 11px;
 }
 .muted {
-  color: #6b7280;
+  color: var(--c-muted);
 }
 .empty {
   padding: 24px;

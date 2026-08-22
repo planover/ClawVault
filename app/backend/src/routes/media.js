@@ -38,16 +38,18 @@ function contentDisposition(filename) {
 export default function createMediaRouter({ storage }) {
   const r = Router();
 
-  r.get('/:id', (req, res) => {
-    const m = storage.getMessage(parseInt(req.params.id, 10));
-    if (!m || !m.media) return res.status(404).json({ error: 'not found' });
+  // 统一解析并校验媒体文件：返回 { m, abs } 或 null（缺失/越界）
+  function resolveMedia(id) {
+    const m = storage.getMessage(parseInt(id, 10));
+    if (!m || !m.media) return null;
     const root = path.resolve(storage.archiveRoot);
     const abs = path.resolve(storage.archiveRoot, m.media);
-    if (abs !== root && !abs.startsWith(root + path.sep)) {
-      return res.status(403).json({ error: 'forbidden' });
-    }
-    if (!fs.existsSync(abs)) return res.status(404).json({ error: 'not found' });
+    if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+    if (!fs.existsSync(abs)) return null;
+    return { m, abs };
+  }
 
+  function serveOriginal(req, res, m, abs) {
     const stat = fs.statSync(abs);
     const type = MIME[path.extname(abs).slice(1).toLowerCase()] || 'application/octet-stream';
     const range = req.headers.range;
@@ -76,6 +78,47 @@ export default function createMediaRouter({ storage }) {
     res.set('Content-Length', stat.size);
     if (m.kind === 'file' && m.filename) res.set('Content-Disposition', contentDisposition(m.filename));
     fs.createReadStream(abs).pipe(res);
+  }
+
+  // 缩略图：按需用 jimp（纯 JS，无原生依赖）缩放，列表/详情用更小带宽。
+  // jimp 未安装或处理失败时，自动回退为原图，保证不回归。
+  r.get('/thumb/:id', async (req, res) => {
+    const hit = resolveMedia(req.params.id);
+    if (!hit) return res.status(404).json({ error: 'not found' });
+    const { m, abs } = hit;
+    const ext = path.extname(abs).slice(1).toLowerCase();
+    const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+    if (!imgExts.includes(ext) || (m.kind !== 'image' && m.kind !== 'sticker')) {
+      return serveOriginal(req, res, m, abs);
+    }
+    let w = parseInt(req.query.w, 10) || 320;
+    if (w < 16) w = 16;
+    if (w > 1280) w = 1280;
+    try {
+      // jimp 0.22 是 CommonJS：命名导入 { Jimp } 取不到，需从 default 兜底。
+      // 其 module.exports 即 Jimp 类本身（也挂了 .Jimp），统一兼容两种形态。
+      const mod = await import('jimp');
+      const Jimp = mod.Jimp ?? (mod.default && (mod.default.Jimp ?? mod.default));
+      const image = await Jimp.read(abs);
+      image.scaleToFit(w, Jimp.AUTO);
+      const asPng = m.kind === 'sticker' || ext === 'png' || ext === 'gif' || ext === 'webp' || ext === 'bmp';
+      const mime = asPng ? 'image/png' : 'image/jpeg';
+      const buf = asPng
+        ? await image.getBufferAsync(Jimp.MIME_PNG)
+        : await image.getBufferAsync(Jimp.MIME_JPEG);
+      res.set('Content-Type', mime);
+      res.set('Cache-Control', 'public, max-age=86400');
+      res.set('Content-Length', buf.length);
+      return res.end(buf);
+    } catch {
+      return serveOriginal(req, res, m, abs);
+    }
+  });
+
+  r.get('/:id', (req, res) => {
+    const hit = resolveMedia(req.params.id);
+    if (!hit) return res.status(404).json({ error: 'not found' });
+    serveOriginal(req, res, hit.m, hit.abs);
   });
 
   return r;

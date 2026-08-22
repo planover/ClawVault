@@ -11,6 +11,7 @@ const newName = ref('');
 const config = ref({});
 const qr = ref(null);
 const notice = ref('');
+const confirmId = ref(null); // 待二次确认的删除通道 id
 
 async function loadProviders() {
   try {
@@ -44,6 +45,7 @@ async function add() {
   emit('changed');
 }
 async function remove(id) {
+  confirmId.value = null;
   await api.deleteChannel(id);
   emit('changed');
 }
@@ -99,6 +101,7 @@ async function saveRename(ch) {
 function close() {
   qr.value = null;
   notice.value = '';
+  confirmId.value = null;
   emit('close');
 }
 </script>
@@ -169,7 +172,14 @@ function close() {
           <button class="btn ghost" @click="login(ch)">
             {{ ch.connected ? '重连' : ch.auth === 'qr' ? '扫码登录' : '连接' }}
           </button>
-          <button class="btn danger" @click="remove(ch.id)">删除</button>
+          <template v-if="confirmId !== ch.id">
+            <button class="btn danger" @click="confirmId = ch.id">删除</button>
+          </template>
+          <template v-else>
+            <span class="confirm-text">确认删除？</span>
+            <button class="btn danger small-btn" @click="remove(ch.id)">确认</button>
+            <button class="btn ghost small-btn" @click="confirmId = null">取消</button>
+          </template>
         </div>
       </div>
       <div v-if="!channels.length" class="muted" style="margin: 10px 0">
@@ -195,11 +205,11 @@ function close() {
 
 <style scoped>
 .card {
-  border: 1px solid #eef0f3;
+  border: 1px solid var(--c-border);
   border-radius: 10px;
   padding: 12px;
   margin-bottom: 14px;
-  background: #fafbfc;
+  background: var(--c-card);
 }
 .cfg {
   margin-top: 10px;
@@ -213,10 +223,10 @@ function close() {
 }
 .field label {
   font-size: 12px;
-  color: #4b5563;
+  color: var(--c-text-2);
 }
 .req {
-  color: #dc2626;
+  color: var(--c-danger);
 }
 .row {
   display: flex;
@@ -229,8 +239,8 @@ function close() {
 .notice {
   margin-top: 10px;
   font-size: 12px;
-  color: #1d4ed8;
-  background: #eff6ff;
+  color: var(--c-notice-text);
+  background: var(--c-notice-bg);
   padding: 8px 10px;
   border-radius: 8px;
 }
@@ -253,14 +263,14 @@ function close() {
   background: transparent;
   cursor: pointer;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--c-muted);
   padding: 2px 4px;
   border-radius: 6px;
   line-height: 1;
 }
 .icon-edit:hover {
-  background: #eef2ff;
-  color: #2563eb;
+  background: var(--c-hover);
+  color: var(--c-primary);
 }
 .rename-input {
   width: 160px;
@@ -269,6 +279,10 @@ function close() {
 .small-btn {
   padding: 5px 10px;
   font-size: 12px;
+}
+.confirm-text {
+  font-size: 12px;
+  color: var(--c-danger);
 }
 .qr {
   margin-top: 16px;
@@ -286,15 +300,15 @@ code {
   margin-left: 6px;
 }
 .tag.ok {
-  background: #dcfce7;
-  color: #15803d;
+  background: var(--c-success-bg);
+  color: var(--c-success-text);
 }
 .tag.warn {
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--c-warn-bg);
+  color: var(--c-warn-text);
 }
 .muted {
-  color: #8a9099;
+  color: var(--c-muted);
 }
 .wide {
   width: 560px;

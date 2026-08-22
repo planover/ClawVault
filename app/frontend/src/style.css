@@ -14,9 +14,45 @@
   --c-success-text: #15803d;
   --c-warn-bg: #fef3c7;
   --c-warn-text: #b45309;
+  --c-card: #fafbfc;
+  --c-hover: #eef2ff;
+  --c-active: #eef2ff;
+  --c-notice-bg: #eff6ff;
+  --c-notice-text: #1d4ed8;
+  --c-danger: #dc2626;
+  --c-danger-bg: #fef2f2;
+  --c-danger-border: #fecaca;
   --radius: 10px;
   --radius-sm: 8px;
   --shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+
+/* 深色模式：仅覆盖语义变量，组件无需逐处改色 */
+[data-theme="dark"] {
+  --c-primary: #3b82f6;
+  --c-primary-700: #60a5fa;
+  --c-primary-50: #1e293b;
+  --c-primary-100: #293548;
+  --c-bg: #0f1419;
+  --c-surface: #161b22;
+  --c-border: #2a3038;
+  --c-border-strong: #3a414b;
+  --c-text: #e6e8eb;
+  --c-text-2: #aab1bb;
+  --c-muted: #8b929c;
+  --c-card: #1b2129;
+  --c-hover: #243044;
+  --c-active: #243044;
+  --c-notice-bg: #16233a;
+  --c-notice-text: #93c5fd;
+  --c-success-bg: #14321f;
+  --c-success-text: #4ade80;
+  --c-warn-bg: #2e2410;
+  --c-warn-text: #fbbf24;
+  --c-danger: #f87171;
+  --c-danger-bg: #2a1416;
+  --c-danger-border: #5b1f22;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 * {
