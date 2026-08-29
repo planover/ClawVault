@@ -6,6 +6,12 @@ import ExcelJS from 'exceljs';
 import { decryptIlink, detectMediaExt } from './ilink_crypto.js';
 import { transcodeVoice } from './voice_transcode.js';
 
+// LIKE 通配符转义：用户输入的 % 与 _ 必须转义，否则搜索「100%」会退化成全表匹配。
+// 转义符统一用反斜杠，并在 SQL 侧声明 ESCAPE '\'。
+function escapeLike(s) {
+  return String(s).replace(/[\\%_]/g, (c) => '\\' + c);
+}
+
 // 判断 buffer 是否已是可识别的图片/音频文件头（用于决定是否需要 AES 解密）
 function isMediaHeader(buf) {
   if (!buf || buf.length < 12) return false;
@@ -342,6 +348,19 @@ export class Storage {
     return next;
   }
 
+  // 聊天.xlsx 的表头定义：新建与重建共用，保证删除消息后重写的文件列序一致
+  static _chatColumns() {
+    return [
+      { header: '时间', key: 'ts', width: 20 },
+      { header: '通道', key: 'channel', width: 18 },
+      { header: '分类', key: 'category', width: 10 },
+      { header: '子分类', key: 'sub', width: 12 },
+      { header: '会话', key: 'peer', width: 16 },
+      { header: '文字', key: 'text', width: 60 },
+      { header: '语音', key: 'voice', width: 34 },
+    ];
+  }
+
   async _appendChatRow(channelName, row) {
     const file = this._chatFile(channelName);
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -352,28 +371,122 @@ export class Storage {
       ws = wb.worksheets[0];
     } else {
       ws = wb.addWorksheet('聊天');
-      ws.columns = [
-        { header: '时间', key: 'ts', width: 20 },
-        { header: '通道', key: 'channel', width: 18 },
-        { header: '分类', key: 'category', width: 10 },
-        { header: '子分类', key: 'sub', width: 12 },
-        { header: '会话', key: 'peer', width: 16 },
-        { header: '文字', key: 'text', width: 60 },
-        { header: '语音', key: 'voice', width: 34 },
-      ];
+      ws.columns = Storage._chatColumns();
     }
     const t = new Date(row.ts || Date.now());
     const pad = (n) => String(n).padStart(2, '0');
     const time = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
-    const added = ws.addRow([time, row.channel || channelName, row.category || '', row.sub || '', row.peer || '', row.text || '', row.voice || '']);
-    // 语音列：本地音频文件 → 超链接到绝对路径
-    if (row.voice && row.voice.includes('语音')) {
-      const abs = path.join(this.archiveRoot, row.voice);
-      const cell = added.getCell(7);
-      cell.value = { text: '🎧 听音频', hyperlink: `file://${abs}` };
-    }
+    this._addChatRow(ws, { ...row, channel: row.channel || channelName });
     await wb.xlsx.writeFile(file);
     return file;
+  }
+
+  // 写入一行聊天记录（时间格式化 + 语音超链接），追加与重建共用
+  _addChatRow(ws, row) {
+    const t = new Date(row.ts || Date.now());
+    const pad = (n) => String(n).padStart(2, '0');
+    const time = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
+    const added = ws.addRow([time, row.channel || '', row.category || '', row.sub || '', row.peer || '', row.text || '', row.voice || '']);
+    // 语音列：本地音频文件 → 超链接到绝对路径
+    if (row.voice && String(row.voice).includes('语音')) {
+      const abs = path.join(this.archiveRoot, row.voice);
+      added.getCell(7).value = { text: '🎧 听音频', hyperlink: `file://${abs}` };
+    }
+    return added;
+  }
+
+  // 删除消息后按 SQLite 现状整体重写该通道的 聊天.xlsx，使导出与索引一致。
+  // 走与追加写同一个串行队列，避免并发追加时读写打架。
+  rebuildChat(channelName) {
+    const key = Storage.safe(channelName);
+    const prev = this._chatQueue.get(key) || Promise.resolve();
+    const run = () => this._rebuildChat(channelName);
+    const next = prev.then(run, run);
+    this._chatQueue.set(key, next);
+    next.finally(() => {
+      if (this._chatQueue.get(key) === next) this._chatQueue.delete(key);
+    });
+    return next;
+  }
+
+  async _rebuildChat(channelName) {
+    const file = this._chatFile(channelName);
+    const rows = this.db
+      .prepare("SELECT * FROM messages WHERE channel_name=? AND kind IN ('text','voice') ORDER BY ts ASC")
+      .all(channelName);
+    if (!rows.length) {
+      // 该通道已无聊天记录：删掉空壳 xlsx，让侧栏归档列表同步消失
+      try {
+        if (fs.existsSync(file)) fs.unlinkSync(file);
+      } catch {
+        /* ignore */
+      }
+      return false;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('聊天');
+    ws.columns = Storage._chatColumns();
+    for (const r of rows) {
+      this._addChatRow(ws, {
+        ts: r.ts,
+        channel: r.channel_name,
+        category: r.category,
+        sub: r.sub,
+        peer: r.peer,
+        text: r.text,
+        voice: r.voice || '',
+      });
+    }
+    await wb.xlsx.writeFile(file);
+    return true;
+  }
+
+  // 删除一条归档记录，并同步清理磁盘与导出：
+  //   1) 删除 SQLite 记录
+  //   2) 其 media/voice 文件若已无其他消息引用（去重表可能让多条消息指向同一文件）则物理删除
+  //   3) 聊天类消息：按剩余记录重写该通道 聊天.xlsx
+  // 返回 { id, removedFiles, xlsxRebuilt }；id 不存在返回 null。
+  async deleteMessage(id) {
+    const row = this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);
+    if (!row) return null;
+
+    this.db.prepare('DELETE FROM messages WHERE id=?').run(id);
+
+    let removedFiles = 0;
+    const root = path.resolve(this.archiveRoot);
+    for (const rel of [row.media, row.voice]) {
+      if (!rel || /^https?:\/\//.test(String(rel))) continue; // 外链不删
+      const stillUsed = this.db
+        .prepare('SELECT COUNT(*) AS c FROM messages WHERE media=? OR voice=?')
+        .get(rel, rel).c;
+      if (stillUsed > 0) continue; // 去重后被其他消息引用
+      const abs = path.resolve(this.archiveRoot, rel);
+      if (abs !== root && !abs.startsWith(root + path.sep)) continue; // 越界保护
+      try {
+        if (fs.existsSync(abs)) {
+          fs.unlinkSync(abs);
+          removedFiles += 1;
+        }
+      } catch (e) {
+        console.error('[ClawVault] 删除归档文件失败:', e?.message || e);
+      }
+      try {
+        this.db.prepare('DELETE FROM media_hashes WHERE rel=?').run(rel);
+      } catch {
+        /* 去重表清理失败不影响主流程 */
+      }
+    }
+
+    let xlsxRebuilt = false;
+    if (Storage.isChat(row.kind)) {
+      try {
+        xlsxRebuilt = await this.rebuildChat(row.channel_name);
+      } catch (e) {
+        console.error('[ClawVault] 重写聊天.xlsx 失败:', e?.message || e);
+      }
+    }
+    return { id, removedFiles, xlsxRebuilt };
   }
 
   // 媒体类型 → 落盘目录（按类型而非语义分类，方便飞牛相册/文件管理器直接预览）
@@ -572,8 +685,8 @@ export class Storage {
       params.kind = kind;
     }
     if (q) {
-      where.push('text LIKE @q');
-      params.q = `%${q}%`;
+      where.push("text LIKE @q ESCAPE '\\'");
+      params.q = `%${escapeLike(q)}%`;
     }
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const rows = this.db

@@ -222,7 +222,7 @@ app.use('/api/settings', createSettingsRouter({ config, storage, saveSettings })
 app.use('/api/chats', createChatsRouter({ storage }));
 app.use('/api/voice', createVoiceRouter({ storage }));
 app.use('/api/media', createMediaRouter({ storage }));
-app.use('/api/about', createAboutRouter());
+app.use('/api/about', createAboutRouter({ storage }));
 app.use('/api/health', createHealthRouter({ storage, manager, config, startedAt }));
 
 // 已注册的 bot 接入类型（前端"添加通道"表单据此渲染）
@@ -258,7 +258,11 @@ const server = http.createServer(app);
 // 因此这里要用「前缀 + /ws」注册，与前端连接地址保持一致。
 ws.attach(server, `${config.gatewayPrefix}/ws`);
 
+// 是否已成功进入监听态（用于区分启动期 / 运行期异常）
+let listening = false;
+
 function onListening() {
+  listening = true;
   const where = config.socketPath ? `unix:${config.socketPath}` : `http://0.0.0.0:${config.port}`;
   const via = config.gatewayPrefix ? `  (网关前缀: ${config.gatewayPrefix})` : '';
   console.log(`ClawVault 已启动: ${where}${via}  归档根: ${config.archiveRoot}`);
@@ -300,12 +304,17 @@ if (config.socketPath) {
   server.listen(config.port, onListening);
 }
 
-// 全局未捕获异常：记录到 stderr 并尽量保持进程运行，便于在 NAS 日志中定位启动/运行时崩溃。
+// 全局未捕获异常：区分启动期与运行期。
+// 启动期（还没 listen 成功）出错说明服务根本起不来，退出让 cmd/main 走重启逻辑；
+// 运行期出错通常来自某个 provider 的轮询回调，直接 exit 会让整个应用在飞牛里显示「已停止」，
+// 代价远大于局部功能失效——因此只记录堆栈、保持进程存活。
 process.on('uncaughtException', (err) => {
   console.error('[ClawVault] 未捕获异常:', err?.message || err);
   console.error(err?.stack || '');
-  // 启动阶段的未捕获异常通常意味着服务不可用，安全退出并依赖 cmd/main 重启逻辑
-  process.exit(1);
+  if (!listening) {
+    console.error('[ClawVault] 启动阶段异常，退出等待重启');
+    process.exit(1);
+  }
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[ClawVault] 未处理的 Promise 拒绝:', reason?.message || reason);

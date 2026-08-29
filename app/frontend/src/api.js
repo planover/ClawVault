@@ -75,6 +75,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ category, sub }),
     }),
+  deleteMessage: (id) => getJson(`/api/messages/${id}`, { method: 'DELETE' }),
   folders: () => getJson('/api/folders'),
   chats: () => getJson('/api/chats'),
   // 直接给 <audio src> / <img src> / <a download> 用，必须自带网关前缀

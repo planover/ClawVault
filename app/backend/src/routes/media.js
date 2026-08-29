@@ -38,15 +38,25 @@ function contentDisposition(filename) {
 export default function createMediaRouter({ storage }) {
   const r = Router();
 
-  // 统一解析并校验媒体文件：返回 { m, abs } 或 null（缺失/越界）
+  // 统一解析并校验媒体文件。
+  // 返回 { m, abs }；越界（media 字段被构造或数据损坏）返回 { traversal: true }；缺失返回 null。
+  // 越界必须与缺失区分开：403 表示归档索引里存在可疑路径，这是需要排查的信号；
+  // 若一律返回 404，真实的路径穿越尝试会被淹没在「文件没找到」里，排障时看不出来。
   function resolveMedia(id) {
     const m = storage.getMessage(parseInt(id, 10));
     if (!m || !m.media) return null;
     const root = path.resolve(storage.archiveRoot);
     const abs = path.resolve(storage.archiveRoot, m.media);
-    if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+    if (abs !== root && !abs.startsWith(root + path.sep)) return { traversal: true };
     if (!fs.existsSync(abs)) return null;
     return { m, abs };
+  }
+
+  // 统一消费 resolveMedia 的三种结果：越界 403 / 缺失 404 / 正常则交给 handler
+  function respond(resolved, res, ok) {
+    if (resolved && resolved.traversal) return res.status(403).json({ error: 'forbidden' });
+    if (!resolved) return res.status(404).json({ error: 'not found' });
+    return ok(resolved.m, resolved.abs);
   }
 
   function serveOriginal(req, res, m, abs) {
@@ -84,6 +94,7 @@ export default function createMediaRouter({ storage }) {
   // jimp 未安装或处理失败时，自动回退为原图，保证不回归。
   r.get('/thumb/:id', async (req, res) => {
     const hit = resolveMedia(req.params.id);
+    if (hit && hit.traversal) return res.status(403).json({ error: 'forbidden' });
     if (!hit) return res.status(404).json({ error: 'not found' });
     const { m, abs } = hit;
     const ext = path.extname(abs).slice(1).toLowerCase();
@@ -115,11 +126,9 @@ export default function createMediaRouter({ storage }) {
     }
   });
 
-  r.get('/:id', (req, res) => {
-    const hit = resolveMedia(req.params.id);
-    if (!hit) return res.status(404).json({ error: 'not found' });
-    serveOriginal(req, res, hit.m, hit.abs);
-  });
+  r.get('/:id', (req, res) =>
+    respond(resolveMedia(req.params.id), res, (m, abs) => serveOriginal(req, res, m, abs)),
+  );
 
   return r;
 }

@@ -1,6 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
 import { api } from '../api.js';
+import { toast } from '../toast.js';
+import Icon from './Icon.vue';
 
 const props = defineProps({ show: Boolean, channels: Array });
 const emit = defineEmits(['close', 'changed']);
@@ -11,7 +13,8 @@ const newName = ref('');
 const config = ref({});
 const qr = ref(null);
 const notice = ref('');
-const confirmId = ref(null); // 待二次确认的删除通道 id
+const confirmId = ref(null); // 待二次确认删除的通道 id
+const busy = ref(false);
 
 async function loadProviders() {
   try {
@@ -19,8 +22,8 @@ async function loadProviders() {
     if (!providers.value.find((p) => p.id === selProvider.value)) {
       selProvider.value = providers.value[0]?.id || 'webhook';
     }
-  } catch {
-    /* ignore */
+  } catch (e) {
+    toast.error('接入类型加载失败：' + (e.message || e));
   }
 }
 onMounted(loadProviders);
@@ -28,38 +31,72 @@ watch(() => props.show, (v) => v && loadProviders());
 
 const currentMeta = computed(() => providers.value.find((p) => p.id === selProvider.value) || {});
 
-// 切换 Provider 时重置配置表单
+// 切换 Provider 时重置配置表单（不同接入类型的字段不同，不能串味）
 watch(selProvider, () => {
   config.value = {};
 });
 
+// 统一错误出口：所有通道操作都必须落到 toast，避免静默失败让用户以为没生效
+async function run(action, okMsg) {
+  if (busy.value) return false;
+  busy.value = true;
+  try {
+    await action();
+    if (okMsg) toast.success(okMsg);
+    return true;
+  } catch (e) {
+    toast.error(e?.message || '操作失败');
+    return false;
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function add() {
-  notice.value = '';
-  await api.createChannel(newName.value, selProvider.value, { ...config.value });
+  if (!newName.value.trim()) {
+    toast.error('请先填写通道名');
+    return;
+  }
+  const name = newName.value.trim();
+  const ok = await run(() => api.createChannel(name, selProvider.value, { ...config.value }));
+  if (!ok) return;
   newName.value = '';
   config.value = {};
   const m = currentMeta.value;
   if (m.auth === 'webhook') {
-    notice.value = `已创建。外部系统请 POST 到 /api/inbound/<通道ID> 推送消息（通道管理列表里可看到 ID）。`;
+    notice.value = '已创建。外部系统请 POST 到 /api/inbound/<通道ID> 推送消息（列表里可复制通道 ID）。';
+  } else {
+    notice.value = '';
   }
   emit('changed');
 }
+
 async function remove(id) {
   confirmId.value = null;
-  await api.deleteChannel(id);
-  emit('changed');
+  const ok = await run(() => api.deleteChannel(id), '通道已删除');
+  if (ok) emit('changed');
 }
+
 async function login(ch) {
-  const info = await api.loginChannel(ch.id);
-  if (ch.auth === 'qr') qr.value = { name: ch.name, ...info };
-  else {
-    qr.value = null;
-    emit('changed');
+  try {
+    const info = await api.loginChannel(ch.id);
+    if (ch.auth === 'qr') {
+      qr.value = { name: ch.name, ...info };
+    } else {
+      qr.value = null;
+      toast.success(`${ch.name}：已发起连接`);
+      emit('changed');
+    }
+  } catch (e) {
+    toast.error(`连接失败：${e?.message || e}`);
   }
 }
+
 async function reLogin(ch) {
-  await api.reLoginChannel(ch.id);
+  const ok = await run(() => api.reLoginChannel(ch.id));
+  if (!ok) return;
   qr.value = null;
+  toast.success(`${ch.name}：已重置，请重新扫码`);
   emit('changed');
 }
 
@@ -93,9 +130,20 @@ async function saveRename(ch) {
     cancelRename();
     return;
   }
-  await api.renameChannel(ch.id, name);
-  cancelRename();
-  emit('changed');
+  const ok = await run(() => api.renameChannel(ch.id, name), '通道已重命名');
+  if (ok) {
+    cancelRename();
+    emit('changed');
+  }
+}
+
+async function copyId(id) {
+  try {
+    await navigator.clipboard.writeText(id);
+    toast.success('通道 ID 已复制');
+  } catch {
+    toast.error('复制失败，请手动选中复制');
+  }
 }
 
 function close() {
@@ -109,31 +157,31 @@ function close() {
 <template>
   <div v-if="show" class="modal-mask" @click.self="close">
     <div class="modal wide">
-      <h3>通道管理（多 Bot 接入）</h3>
+      <h3>通道管理</h3>
+      <p class="modal-sub">接入一个或多个 Bot，消息会被自动归档到 NAS。</p>
 
       <!-- 新增通道 -->
-      <div class="card">
-        <div class="row">
-          <select class="input" v-model="selProvider">
-            <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.icon }} {{ p.name }}</option>
+      <div class="add-card">
+        <div class="add-row">
+          <select class="input" v-model="selProvider" aria-label="接入类型">
+            <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
-          <input class="input" v-model="newName" placeholder="通道名，如 工作Bot" @keyup.enter="add" />
-          <button class="btn primary" @click="add">添加</button>
+          <input class="input" v-model="newName" placeholder="通道名，如 工作Bot" maxlength="20" @keyup.enter="add" />
+          <button class="btn" :disabled="busy" @click="add">
+            <Icon name="plus" :size="15" /> 添加
+          </button>
         </div>
-        <p class="muted small">{{ currentMeta.desc }}</p>
+        <p v-if="currentMeta.desc" class="field-hint">{{ currentMeta.desc }}</p>
 
         <div v-if="currentMeta.configFields?.length" class="cfg">
           <div v-for="f in currentMeta.configFields" :key="f.key" class="field">
-            <label>{{ f.label }}<span v-if="f.required" class="req">*</span></label>
-            <select
-              v-if="f.type === 'select'"
-              class="input"
-              v-model="config[f.key]"
-            >
+            <label :for="`cfg-${f.key}`">{{ f.label }}<span v-if="f.required" class="req">*</span></label>
+            <select v-if="f.type === 'select'" :id="`cfg-${f.key}`" class="input" v-model="config[f.key]">
               <option v-for="o in f.options" :key="o" :value="o">{{ o }}</option>
             </select>
             <input
               v-else
+              :id="`cfg-${f.key}`"
               class="input"
               :type="f.type === 'password' ? 'password' : 'text'"
               v-model="config[f.key]"
@@ -141,10 +189,12 @@ function close() {
             />
           </div>
         </div>
+
         <p v-if="notice" class="notice">{{ notice }}</p>
       </div>
 
       <!-- 已有通道 -->
+      <div class="section-label ch-header">已接入 {{ channels.length }} 个通道</div>
       <div v-for="ch in channels" :key="ch.id" class="ch-row">
         <div class="ch-main">
           <template v-if="editingId === ch.id">
@@ -152,166 +202,187 @@ function close() {
               class="input rename-input"
               :value="editName"
               maxlength="20"
+              aria-label="新通道名"
               @input="editName = sanitizeName($event.target.value)"
               @keyup.enter="saveRename(ch)"
               @keyup.esc="cancelRename"
             />
-            <button class="btn ghost small-btn" @click="saveRename(ch)">保存</button>
-            <button class="btn ghost small-btn" @click="cancelRename">取消</button>
+            <button class="btn sm" @click="saveRename(ch)">保存</button>
+            <button class="btn sm ghost" @click="cancelRename">取消</button>
           </template>
           <template v-else>
-            <b>{{ ch.providerIcon }} {{ ch.name }}</b>
-            <button class="icon-edit" title="重命名通道" aria-label="重命名通道" @click="startRename(ch)">✎</button>
+            <span class="ch-name truncate">{{ ch.name }}</span>
+            <button class="icon-btn sm" title="重命名通道" aria-label="重命名通道" @click="startRename(ch)">
+              <Icon name="edit" :size="14" />
+            </button>
             <span class="tag ok" v-if="ch.connected">已连接</span>
             <span class="tag warn" v-else-if="ch.needRescan">需重新扫码</span>
-            <span class="muted" v-else>未连接</span>
-            <span class="muted small">· {{ ch.providerName }}</span>
+            <span class="tag neutral" v-else>未连接</span>
+            <span class="provider muted small">{{ ch.providerName }}</span>
           </template>
         </div>
-        <div class="row" v-if="editingId !== ch.id">
-          <button class="btn ghost" @click="login(ch)">
+
+        <div class="row ch-actions" v-if="editingId !== ch.id">
+          <button class="icon-btn sm" title="复制通道 ID" aria-label="复制通道 ID" @click="copyId(ch.id)">
+            <Icon name="sheet" :size="15" />
+          </button>
+          <button class="btn sm ghost" :disabled="busy" @click="login(ch)">
             {{ ch.connected ? '重连' : ch.auth === 'qr' ? '扫码登录' : '连接' }}
           </button>
+          <template v-if="ch.needRescan">
+            <button class="btn sm ghost" :disabled="busy" @click="reLogin(ch)">重置</button>
+          </template>
           <template v-if="confirmId !== ch.id">
-            <button class="btn danger" @click="confirmId = ch.id">删除</button>
+            <button class="icon-btn sm danger-text" title="删除通道" aria-label="删除通道" @click="confirmId = ch.id">
+              <Icon name="trash" :size="15" />
+            </button>
           </template>
           <template v-else>
             <span class="confirm-text">确认删除？</span>
-            <button class="btn danger small-btn" @click="remove(ch.id)">确认</button>
-            <button class="btn ghost small-btn" @click="confirmId = null">取消</button>
+            <button class="btn sm danger" @click="remove(ch.id)">删除</button>
+            <button class="btn sm ghost" @click="confirmId = null">取消</button>
           </template>
         </div>
       </div>
-      <div v-if="!channels.length" class="muted" style="margin: 10px 0">
-        还没有通道，选择一个 Bot 类型并添加。
-      </div>
 
+      <p v-if="!channels.length" class="muted small empty-ch">还没有通道，选择一种接入类型并添加。</p>
+
+      <!-- 扫码绑定 -->
       <div v-if="qr" class="qr">
-        <h3>用{{ qr.name.includes('微信') ? '微信' : '对应 App' }}扫码绑定「{{ qr.name }}」</h3>
-        <img v-if="qrSrc" :src="qrSrc" style="width: 220px; height: 220px" />
-        <div v-else class="muted">
-          二维码链接（请在 App 中打开）：<br />
+        <div class="section-label">扫码绑定「{{ qr.name }}」</div>
+        <img v-if="qrSrc" class="qr-img" :src="qrSrc" alt="登录二维码" />
+        <div v-else class="muted small qr-fallback">
+          <p>二维码链接（请在 App 中打开）：</p>
           <code>{{ qr.qrcodeImg || qr.qrcode }}</code>
         </div>
-        <p class="muted">扫码并在手机确认后，该 bot 的私聊即开始归档。</p>
+        <p class="muted small">扫码并在手机确认后，该 bot 的私聊即开始归档。</p>
       </div>
 
-      <div class="row" style="margin-top: 16px; justify-content: flex-end">
-        <button class="btn" @click="close">完成</button>
+      <div class="modal-actions">
+        <button class="btn ghost" @click="close">完成</button>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.card {
+.add-card {
+  padding: 14px;
   border: 1px solid var(--c-border);
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 14px;
-  background: var(--c-card);
+  border-radius: var(--r-lg);
+  background: var(--c-surface-2);
+  margin-bottom: 20px;
+}
+.add-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.4fr auto;
+  gap: 8px;
 }
 .cfg {
-  margin-top: 10px;
+  margin-top: 14px;
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
-.field label {
-  font-size: 12px;
-  color: var(--c-text-2);
+  gap: 5px;
+  margin-bottom: 0;
 }
 .req {
   color: var(--c-danger);
-}
-.row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.small {
-  font-size: 12px;
+  margin-left: 3px;
 }
 .notice {
-  margin-top: 10px;
+  margin: 12px 0 0;
+  padding: 9px 11px;
   font-size: 12px;
-  color: var(--c-notice-text);
-  background: var(--c-notice-bg);
-  padding: 8px 10px;
-  border-radius: 8px;
+  line-height: 1.55;
+  color: var(--c-primary);
+  background: var(--c-primary-soft);
+  border-radius: var(--r-sm);
+}
+.ch-header {
+  margin-bottom: 8px;
 }
 .ch-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid #eef0f3;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--c-border);
+  flex-wrap: wrap;
 }
 .ch-main {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
   min-width: 0;
+  flex: 1;
 }
-.icon-edit {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--c-muted);
-  padding: 2px 4px;
-  border-radius: 6px;
-  line-height: 1;
+.ch-name {
+  font-size: 13.5px;
+  font-weight: 600;
 }
-.icon-edit:hover {
-  background: var(--c-hover);
-  color: var(--c-primary);
+.provider {
+  white-space: nowrap;
 }
-.rename-input {
-  width: 160px;
-  padding: 5px 8px;
+.ch-actions {
+  flex-shrink: 0;
+  gap: 4px;
 }
-.small-btn {
-  padding: 5px 10px;
-  font-size: 12px;
+.danger-text {
+  color: var(--c-faint);
+}
+.danger-text:hover {
+  color: var(--c-danger);
+  background: var(--c-danger-bg);
 }
 .confirm-text {
   font-size: 12px;
   color: var(--c-danger);
+  white-space: nowrap;
+}
+.rename-input {
+  width: 150px;
+  height: 30px;
+}
+.empty-ch {
+  padding: 4px 0 8px;
 }
 .qr {
-  margin-top: 16px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--c-border);
   text-align: center;
-  border-top: 1px solid #eef0f3;
-  padding-top: 12px;
 }
-code {
+.qr-img {
+  width: 200px;
+  height: 200px;
+  margin: 12px 0 8px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border);
+  background: #fff;
+}
+.qr-fallback {
+  text-align: left;
   word-break: break-all;
 }
-.tag {
-  font-size: 11px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  margin-left: 6px;
+.qr-fallback p {
+  margin: 8px 0 4px;
 }
-.tag.ok {
-  background: var(--c-success-bg);
-  color: var(--c-success-text);
-}
-.tag.warn {
-  background: var(--c-warn-bg);
-  color: var(--c-warn-text);
-}
-.muted {
-  color: var(--c-muted);
-}
-.wide {
-  width: 560px;
-  max-width: 94vw;
+
+@media (max-width: 560px) {
+  .add-row {
+    grid-template-columns: 1fr;
+  }
+  .ch-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ch-actions {
+    justify-content: flex-end;
+  }
 }
 </style>

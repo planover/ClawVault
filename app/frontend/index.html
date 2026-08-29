@@ -2,8 +2,27 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="ClawVault（爪匣）：把多 Bot 对话自动分类归档到飞牛 NAS" />
+    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0f14" media="(prefers-color-scheme: dark)" />
+    <!-- 内联 SVG favicon：与品牌图标一致，避免额外请求 -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M7 11h18v4H7zM9 15v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9M14 19h4' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
     <title>ClawVault（爪匣）</title>
+    <style>
+      /* 首屏主题色即时生效，避免深色偏好用户看到白闪 */
+      html {
+        background: #f6f7f9;
+      }
+      @media (prefers-color-scheme: dark) {
+        html {
+          background: #0d0f14;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>

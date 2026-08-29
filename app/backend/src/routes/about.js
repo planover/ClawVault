@@ -3,13 +3,15 @@ import { readManifestVersion } from '../version.js';
 
 // 关于页面信息：版本（读 manifest）+ 仓库/协议/开发者等静态信息。
 // 品牌以 ClawVault（爪匣）真实身份展示。
-export default function createAboutRouter() {
+export default function createAboutRouter({ storage } = {}) {
   const r = Router();
   r.get('/', (req, res) => {
     res.json({
       name: '爪匣 ClawVault',
       version: readManifestVersion() || '',
       developer: 'planover',
+      // 归档总量：让「关于」页能直观显示已归档条数（无 storage 时省略）
+      total: storage ? storage.count() : 0,
       repo: 'https://github.com/planover/ClawVault',
       changelog: 'https://github.com/planover/ClawVault/releases',
       license: 'AGPL-3.0',
