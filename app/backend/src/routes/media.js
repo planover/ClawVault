@@ -90,6 +90,32 @@ export default function createMediaRouter({ storage }) {
     fs.createReadStream(abs).pipe(res);
   }
 
+  // 媒体元信息：返回文件名 / 大小 / MIME / 扩展名，供前端「文件预览」展示
+  // 文件名、大小、类型标识。与下载路由共用 resolveMedia 的越界/缺失判定。
+  r.get('/info/:id', (req, res) => {
+    const hit = resolveMedia(req.params.id);
+    if (hit && hit.traversal) return res.status(403).json({ error: 'forbidden' });
+    if (!hit) return res.status(404).json({ error: 'not found' });
+    const { m, abs } = hit;
+    let stat;
+    try {
+      stat = fs.statSync(abs);
+    } catch {
+      return res.status(404).json({ error: 'not found' });
+    }
+    const ext = path
+      .extname(m.filename || abs)
+      .slice(1)
+      .toLowerCase();
+    const mime = MIME[ext] || 'application/octet-stream';
+    res.json({
+      filename: m.filename || path.basename(abs),
+      size: stat.size,
+      mime,
+      ext,
+    });
+  });
+
   // 缩略图：按需用 jimp（纯 JS，无原生依赖）缩放，列表/详情用更小带宽。
   // jimp 未安装或处理失败时，自动回退为原图，保证不回归。
   r.get('/thumb/:id', async (req, res) => {

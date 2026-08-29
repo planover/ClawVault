@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { decryptIlink, detectMediaExt } from './ilink_crypto.js';
 import { transcodeVoice } from './voice_transcode.js';
+import { isPureEmojiText } from './wechatEmoji.js';
 
 // LIKE 通配符转义：用户输入的 % 与 _ 必须转义，否则搜索「100%」会退化成全表匹配。
 // 转义符统一用反斜杠，并在 SQL 侧声明 ESCAPE '\'。
@@ -115,19 +116,22 @@ export class Storage {
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
 
-  _md({ ts, channelName, peer, category, sub, text }) {
-    const t = new Date(ts).toLocaleString('zh-CN');
-    const cat = sub ? `${category} / ${sub}` : category;
-    // 标题与文案平台无关（同一套引擎服务微信/Telegram/飞书/Discord…），不再写死"微信"
-    return `# ClawVault 对话归档\n\n- 时间：${t}\n- 通道：${channelName}\n- 对方：${peer || '我'}\n- 分类：${cat}\n\n---\n\n${text}\n`;
-  }
-
   // 保存一条消息：写 SQLite；真正的媒体文件由 saveMedia 按类型落盘到 图片/文件/视频/语音 目录，
   // 不再为每条消息生成 Markdown 卡片（用户需在飞牛文件管理器中直接预览原文件）。
   // 聊天类(纯文本/语音)引用该通道的 聊天.xlsx。
   saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '', voice = '', media = '', filename = '' }) {
     const ts = Date.now();
-    const chat = Storage.isChat(kind);
+    // 微信表情占位符（如 [裂开]）：若整条文本只是表情、且未被显式标记为媒体类型，
+    // 则归入「表情」类型（emoji），而非普通文本——这样分类 / 统计 / 样式都按表情处理。
+    let effectiveKind = kind;
+    if ((!effectiveKind || effectiveKind === 'text') && isPureEmojiText(text)) {
+      effectiveKind = 'emoji';
+    } else if (!effectiveKind) {
+      // 未显式给定类型（纯文本消息）统一规整为 'text'，
+      // 否则会落库为 ''，既无法命中「文本」筛选，也不利于统计。
+      effectiveKind = 'text';
+    }
+    const chat = Storage.isChat(effectiveKind);
     const fpath = chat ? this._chatFile(channelName) : ''; // 非聊天类：path 留空，主文件由 saveMedia 落盘
 
     const info = {
@@ -138,7 +142,7 @@ export class Storage {
       category,
       sub,
       text,
-      kind,
+      kind: effectiveKind,
       path: fpath,
       voice: voice || '',
       media: media || '',
@@ -664,7 +668,24 @@ export class Storage {
     return out;
   }
 
+  // 一次性把历史数据中「整条仅含微信表情占位符」的文本消息重新归类为表情类型。
+  // 幂等：已为 emoji 的不重复处理；只扫描原本是 text/空 kind 的记录。返回受影响条数。
+  reclassifyEmojis() {
+    const rows = this.db
+      .prepare("SELECT id, text FROM messages WHERE kind = '' OR kind = 'text'")
+      .all();
+    let n = 0;
+    for (const r of rows) {
+      if (isPureEmojiText(r.text)) {
+        this.db.prepare("UPDATE messages SET kind = 'emoji' WHERE id = ?").run(r.id);
+        n += 1;
+      }
+    }
+    return n;
+  }
+
   // 列表查询（支持通道/分类/子分类/类型/搜索过滤 + 分页）
+  // kind 支持逗号分隔的多个值（如 "sticker,emoji"），用于「表情」筛选同时覆盖贴纸与文字表情。
   listMessages({ channelId, category, sub, kind, q, limit = 50, offset = 0 } = {}) {
     const where = [];
     const params = {};
@@ -681,8 +702,17 @@ export class Storage {
       params.sub = sub;
     }
     if (kind) {
-      where.push('kind = @kind');
-      params.kind = kind;
+      const list = String(kind).split(',').map((s) => s.trim()).filter(Boolean);
+      if (list.length === 1) {
+        where.push('kind = @kind');
+        params.kind = list[0];
+      } else {
+        const ph = list.map((_, i) => `@kind${i}`).join(',');
+        where.push(`kind IN (${ph})`);
+        list.forEach((k, i) => {
+          params[`kind${i}`] = k;
+        });
+      }
     }
     if (q) {
       where.push("text LIKE @q ESCAPE '\\'");

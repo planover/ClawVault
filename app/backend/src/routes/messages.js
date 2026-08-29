@@ -43,6 +43,18 @@ export default function createMessagesRouter({ storage, ws }) {
     res.json(updated);
   });
 
+  // 一次性把历史数据里「整条仅含微信表情占位符」的文本消息重新归类为表情类型，
+  // 让分类 / 统计 / 样式与新写入保持一致。返回受影响条数。
+  r.post('/reclassify-emoji', (req, res) => {
+    try {
+      const updated = storage.reclassifyEmojis();
+      ws.broadcast({ type: 'refresh' });
+      res.json({ ok: true, updated });
+    } catch (e) {
+      res.status(500).json({ error: e?.message || 'reclassify failed' });
+    }
+  });
+
   // 删除一条归档记录：同时清理不再被引用的媒体/语音文件，并按通道重写 聊天.xlsx，
   // 保证 SQLite 索引、磁盘文件、xlsx 导出三处一致。
   r.delete('/:id', async (req, res) => {

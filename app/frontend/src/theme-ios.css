@@ -1,0 +1,138 @@
+/* =========================================================================
+   ClawVault · iOS 主题（独立视觉风格）
+   - 通过 [data-theme-style='ios'] 启用，仅覆盖语义变量，不改动组件结构
+   - 浅色：iOS systemBlue 强调色 + 分组灰底（systemGroupedBackground），轻分隔线
+   - 深色：纯黑底 + 高饱和强调色，保留 iOS 暗色质感
+   - 光影：更柔更大、过渡更轻的阴影；圆角整体加大，控件更圆润
+   - 层次：顶栏 / 侧栏 / 详情做毛玻璃半透明，叠出纵深
+   ========================================================================= */
+
+/* ---------------- iOS 浅色 ---------------- */
+[data-theme-style='ios'] {
+  --c-primary: #007aff;
+  --c-primary-hover: #0a84ff;
+  --c-primary-active: #0062cc;
+  --c-primary-soft: #e9f2ff;
+  --c-primary-soft-2: #d9eaff;
+  --c-primary-ring: rgba(0, 122, 255, 0.22);
+
+  --c-bg: #f2f2f7; /* systemGroupedBackground */
+  --c-surface: #ffffff;
+  --c-surface-2: #f7f7fa;
+  --c-surface-3: #e9e9ee;
+
+  --c-border: #e5e5ea; /* separator */
+  --c-border-strong: #c7c7cf;
+
+  --c-text: #1c1c1e;
+  --c-text-2: #48484a; /* secondaryLabel */
+  --c-muted: #6b6b70; /* tertiaryLabel */
+  --c-faint: #8e8e93; /* quaternaryLabel */
+
+  --c-success: #34c759;
+  --c-success-bg: #e7f8ec;
+  --c-warn: #ff9f0a;
+  --c-warn-bg: #fff3e0;
+  --c-danger: #ff3b30;
+  --c-danger-hover: #e0352b;
+  --c-danger-bg: #ffeceb;
+  --c-danger-border: #ffc9c5;
+
+  --c-hover: #ececf1;
+  --c-active: #e9f2ff;
+
+  /* 圆润控件：整体加大圆角 */
+  --r-xs: 8px;
+  --r-sm: 10px;
+  --r-md: 13px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-full: 999px;
+
+  /* 细腻光影：更柔、更轻的阴影 */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.16), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* ---------------- iOS 深色 ---------------- */
+[data-theme-style='ios'][data-theme='dark'] {
+  --c-primary: #0a84ff;
+  --c-primary-hover: #409cff;
+  --c-primary-active: #5ac8fa;
+  --c-primary-soft: #0a2a4a;
+  --c-primary-soft-2: #0e3a63;
+  --c-primary-ring: rgba(10, 132, 255, 0.3);
+
+  --c-bg: #000000; /* 纯黑底 */
+  --c-surface: #1c1c1e;
+  --c-surface-2: #2c2c2e;
+  --c-surface-3: #3a3a3c;
+
+  --c-border: #38383a;
+  --c-border-strong: #48484a;
+
+  --c-text: #f2f2f7;
+  --c-text-2: #d1d1d6;
+  --c-muted: #aeaeb2;
+  --c-faint: #8e8e93;
+
+  --c-success: #30d158;
+  --c-success-bg: #0e2a18;
+  --c-warn: #ffd60a;
+  --c-warn-bg: #2e2606;
+  --c-danger: #ff453a;
+  --c-danger-hover: #ff6961;
+  --c-danger-bg: #2c1413;
+  --c-danger-border: #4a2422;
+
+  --c-hover: #2c2c2e;
+  --c-active: #0a2a4a;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.65);
+}
+
+/* ---------------- 半透明层次（毛玻璃） ----------------
+   仅增强既有结构：用更高特异度（.app 前缀）覆盖组件 scoped 样式，
+   不改变任何 DOM，关闭 iOS 风格时自动回退到默认变量值。 */
+
+/* 顶栏：毛玻璃、轻投影 */
+[data-theme-style='ios'] .app .topbar {
+  background: color-mix(in srgb, var(--c-surface) 72%, transparent);
+  backdrop-filter: saturate(180%) blur(22px);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.05);
+}
+[data-theme-style='ios'][data-theme='dark'] .app .topbar {
+  background: color-mix(in srgb, var(--c-surface) 70%, transparent);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05), 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* 侧栏：半透明叠出纵深 */
+[data-theme-style='ios'] .app .sidebar {
+  background: color-mix(in srgb, var(--c-surface-2) 86%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+[data-theme-style='ios'][data-theme='dark'] .app .sidebar {
+  background: color-mix(in srgb, var(--c-surface-2) 80%, transparent);
+}
+
+/* 详情面板：半透明 */
+[data-theme-style='ios'] .app .detail {
+  background: color-mix(in srgb, var(--c-surface) 90%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+[data-theme-style='ios'][data-theme='dark'] .app .detail {
+  background: color-mix(in srgb, var(--c-surface) 82%, transparent);
+}
+
+/* 列表卡片：iOS 卡片式悬浮感 */
+[data-theme-style='ios'] .app .skeleton-card {
+  border-radius: var(--r-lg);
+}

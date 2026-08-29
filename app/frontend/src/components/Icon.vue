@@ -16,6 +16,8 @@ const PATHS = {
   chevronRight: 'm9 6 6 6-6 6',
   chevronDown: 'm6 9 6 6 6-6',
   plus: 'M12 5v14M5 12h14',
+  minus: 'M5 12h14',
+  expand: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
   check: 'm5 13 4 4L19 7',
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
   edit: 'M4 20h4L19 9l-4-4L4 16v4ZM14 6l4 4',

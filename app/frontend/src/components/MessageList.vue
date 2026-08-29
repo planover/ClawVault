@@ -2,6 +2,8 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { api } from '../api.js';
 import Icon from './Icon.vue';
+import FilePreview from './FilePreview.vue';
+import { renderEmojiHtml, isPureEmoji } from '../wechatEmoji.js';
 
 const props = defineProps({
   messages: Array,
@@ -9,7 +11,16 @@ const props = defineProps({
   emptyText: { type: String, default: '这里还没有归档内容' },
   query: { type: String, default: '' },
 });
-const emit = defineEmits(['select', 'delete', 'load-more']);
+const emit = defineEmits(['select', 'delete', 'load-more', 'open-lightbox']);
+
+// 当前视图里的图片类消息 id 列表（按展示顺序），供灯箱左右切换使用
+const imageIds = computed(() =>
+  props.messages.filter((m) => (m.kind === 'image' || m.kind === 'sticker') && m.media).map((m) => m.id),
+);
+function openLightbox(id) {
+  const i = imageIds.value.indexOf(id);
+  emit('open-lightbox', { ids: imageIds.value, index: i < 0 ? 0 : i });
+}
 
 // 图片加载失败兜底（按消息 id 记录）
 const imgFailed = reactive({});
@@ -26,6 +37,7 @@ const KIND_ICON = {
   voice: 'mic',
   image: 'image',
   sticker: 'smile',
+  emoji: 'smile',
   video: 'video',
   file: 'file',
 };
@@ -57,6 +69,11 @@ function highlighted(text) {
   } catch {
     return safe;
   }
+}
+
+// 搜索高亮后再还原微信表情占位符（[裂开] → 😆）。输入已是转义文本，renderEmojiHtml 只做占位符替换，安全。
+function renderText(text) {
+  return renderEmojiHtml(highlighted(text));
 }
 
 function onKey(e, id) {
@@ -120,7 +137,7 @@ watch(
       v-for="m in messages"
       :key="m.id"
       class="card"
-      :class="{ active: m.id === selectedId, confirming: confirmId === m.id }"
+      :class="{ active: m.id === selectedId, confirming: confirmId === m.id, 'emoji-card': m.kind === 'emoji' }"
       role="button"
       tabindex="0"
       :aria-pressed="m.id === selectedId"
@@ -151,7 +168,9 @@ watch(
           loading="lazy"
           decoding="async"
           alt="图片"
+          class="thumb-img"
           @error="imgFailed[m.id] = true"
+          @click.stop="openLightbox(m.id)"
         />
         <div v-else class="media-missing"><Icon name="alert" :size="14" /> 媒体加载失败</div>
       </div>
@@ -159,9 +178,9 @@ watch(
         <Icon name="alert" :size="14" /> {{ m.kind === 'sticker' ? '表情' : '图片' }}未保存（旧版本或接收时缺失）
       </div>
 
-      <!-- 视频 / 文件 -->
+      <!-- 视频：列表内保持轻量，点开详情再内嵌播放 -->
       <a
-        v-else-if="(m.kind === 'video' || m.kind === 'file') && m.media"
+        v-else-if="m.kind === 'video' && m.media"
         class="file-chip"
         :href="api.mediaUrl(m.id)"
         target="_blank"
@@ -169,9 +188,17 @@ watch(
         :download="m.filename || ''"
         @click.stop
       >
-        <Icon :name="m.kind === 'video' ? 'video' : 'file'" :size="15" />
-        <span class="truncate">{{ m.filename || (m.kind === 'video' ? '播放视频' : '查看/下载附件') }}</span>
+        <Icon name="video" :size="15" />
+        <span class="truncate">{{ m.filename || '播放视频' }}</span>
       </a>
+
+      <!-- 文件：在线预览（图片/视频/音频/PDF/文本）或下载回退 -->
+      <FilePreview
+        v-else-if="m.kind === 'file' && m.media"
+        :message="m"
+        compact
+        @open-lightbox="openLightbox"
+      />
 
       <!-- 语音：文字 + 可展开音频 -->
       <template v-else-if="m.kind === 'voice'">
@@ -185,7 +212,7 @@ watch(
         <div v-else class="media-missing"><Icon name="mic" :size="14" /> 语音（无音频文件）</div>
       </template>
 
-      <p v-if="m.text" class="text" v-html="highlighted(m.text)"></p>
+      <p v-if="m.text" class="text" :class="{ 'text-emoji': m.kind === 'emoji' }" v-html="renderText(m.text)"></p>
 
       <!-- 删除二次确认 -->
       <div v-if="confirmId === m.id" class="confirm" @click.stop>
@@ -288,6 +315,11 @@ watch(
   border-radius: var(--r-md);
   border: 1px solid var(--c-border);
   background: var(--c-surface-2);
+  cursor: zoom-in;
+  transition: filter var(--t-fast);
+}
+.thumb img:hover {
+  filter: brightness(0.96);
 }
 
 .file-chip {

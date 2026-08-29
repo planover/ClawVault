@@ -5,8 +5,25 @@ import { toast } from '../toast.js';
 import { pickArchiveDir, inFnosHost, revealInFileManager } from '../fnos.js';
 import Icon from './Icon.vue';
 
-const props = defineProps({ show: Boolean });
-const emit = defineEmits(['close', 'saved']);
+const props = defineProps({ show: Boolean, mode: String, themeStyle: String });
+const emit = defineEmits(['close', 'saved', 'set-mode', 'set-style']);
+
+// 外观：模式（跟随系统 / 浅色 / 深色）+ 风格（默认 / iOS），改动直接冒泡到 App 做持久化
+const modeOptions = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+];
+const styleOptions = [
+  { value: 'default', label: '默认' },
+  { value: 'ios', label: 'iOS' },
+];
+function onSetMode(v) {
+  emit('set-mode', v);
+}
+function onSetStyle(v) {
+  emit('set-style', v);
+}
 
 const settings = ref(null);
 const testing = ref(false);
@@ -119,7 +136,42 @@ async function testAI() {
   <div v-if="show" class="modal-mask" @click.self="emit('close')">
     <div class="modal" v-if="settings">
       <h3>设置</h3>
-      <p class="modal-sub">归档位置、AI 分类与语音转写。</p>
+      <p class="modal-sub">外观、归档位置、AI 分类与语音转写。</p>
+
+      <!-- 外观 -->
+      <div class="section-label section-title">外观</div>
+      <div class="field">
+        <label>模式</label>
+        <div class="seg-group" role="group" aria-label="主题模式">
+          <button
+            v-for="o in modeOptions"
+            :key="o.value"
+            class="seg"
+            :class="{ on: props.mode === o.value }"
+            :aria-pressed="props.mode === o.value"
+            @click="onSetMode(o.value)"
+          >
+            {{ o.label }}
+          </button>
+        </div>
+        <p class="field-hint">选择「跟随系统」时，会随操作系统深浅色设置自动切换。</p>
+      </div>
+      <div class="field">
+        <label>风格</label>
+        <div class="seg-group" role="group" aria-label="主题风格">
+          <button
+            v-for="o in styleOptions"
+            :key="o.value"
+            class="seg"
+            :class="{ on: props.themeStyle === o.value }"
+            :aria-pressed="props.themeStyle === o.value"
+            @click="onSetStyle(o.value)"
+          >
+            {{ o.label }}
+          </button>
+        </div>
+        <p class="field-hint">「iOS」为独立视觉风格，具备细腻光影、半透明层次与圆润控件质感，深浅色均支持。</p>
+      </div>
 
       <!-- 归档 -->
       <div class="section-label section-title">归档</div>
@@ -249,6 +301,37 @@ async function testAI() {
 }
 .field {
   margin-bottom: 14px;
+}
+.field > label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.seg-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--c-surface-3);
+  border-radius: var(--r-sm);
+  max-width: 100%;
+}
+.seg {
+  padding: 6px 16px;
+  border-radius: var(--r-xs);
+  font-size: 13px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+.seg:hover {
+  color: var(--c-text);
+}
+.seg.on {
+  background: var(--c-surface);
+  color: var(--c-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
 }
 .toggle-row {
   display: flex;

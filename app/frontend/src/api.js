@@ -83,6 +83,8 @@ export const api = {
   mediaUrl: (id) => apiUrl(`/api/media/${id}`),
   // 缩略图：后端按需缩放，列表/详情用更小的带宽（w 默认 320，详情可传更大）
   thumbUrl: (id, w = 320) => apiUrl(`/api/media/thumb/${id}?w=${w}`),
+  // 媒体元信息：文件名 / 大小 / MIME / 扩展名，供「文件预览」展示
+  mediaInfo: (id) => getJson(`/api/media/info/${id}`),
   about: () => getJson('/api/about'),
   getSettings: () => getJson('/api/settings'),
   saveSettings: (body) =>

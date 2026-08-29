@@ -485,6 +485,30 @@ mark {
   border-radius: 3px;
   padding: 0 1px;
 }
+
+/* ---------- 微信表情渲染 ---------- */
+.wx-emoji {
+  display: inline-block;
+  font-size: 1.15em;
+  line-height: 1;
+  vertical-align: -0.12em;
+  margin: 0 1px;
+}
+.text-emoji {
+  font-size: 26px;
+  line-height: 1.5;
+  letter-spacing: 2px;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  display: block;
+  overflow: visible;
+  word-break: normal;
+}
+.emoji-card .card-head .tag {
+  background: var(--c-warn-bg);
+  color: var(--c-warn);
+}
+
 [data-theme='dark'] mark {
   background: rgba(250, 204, 21, 0.26);
   color: #fde68a;

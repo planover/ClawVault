@@ -332,6 +332,7 @@ function startDemoMode() {
     { kind: 'image', text: '这是今天评审用的架构设计图' },
     { kind: 'text', text: '帮我写一段读取 CSV 并画折线图的 Python 脚本' },
     { kind: 'text', text: '把这次团建方案整理一下：周六上午爬山，下午剧本杀' },
+    { kind: 'text', text: '[裂开][旺柴] 这需求又变了' },
   ];
   let i = 0;
   const tick = () => {

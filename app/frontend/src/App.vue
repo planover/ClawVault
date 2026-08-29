@@ -4,8 +4,11 @@ import { api, connectWS } from './api.js';
 import { setWindowTitle } from './fnos.js';
 import { toast } from './toast.js';
 import Icon from './components/Icon.vue';
+import { renderEmojiText } from './wechatEmoji.js';
 import FolderTree from './components/FolderTree.vue';
 import MessageList from './components/MessageList.vue';
+import Lightbox from './components/Lightbox.vue';
+import FilePreview from './components/FilePreview.vue';
 import ChannelDialog from './components/ChannelDialog.vue';
 import SettingsDialog from './components/SettingsDialog.vue';
 import AboutDialog from './components/AboutDialog.vue';
@@ -21,37 +24,61 @@ const selectedMessage = ref(null);
 const showChannels = ref(false);
 const showSettings = ref(false);
 const showAbout = ref(false);
+const lightbox = reactive({ show: false, ids: [], index: 0 });
 const detailImgFailed = ref(false);
 const newCat = ref('');
 const newSub = ref('');
 
-// ---- 主题：默认跟随系统，用户手动切换后记入 localStorage ----
-const THEME_KEY = 'clawvault-theme';
-const theme = ref(
-  (() => {
-    try {
-      const saved = localStorage.getItem(THEME_KEY);
-      if (saved === 'dark' || saved === 'light') return saved;
-    } catch {
-      /* localStorage 不可用（隐私模式）时忽略 */
-    }
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  })(),
-);
+// ---- 主题：模式（跟随系统 / 浅色 / 深色）+ 风格（默认 / iOS），均持久化 ----
+const THEME_KEY = 'clawvault-mode'; // system | light | dark
+const STYLE_KEY = 'clawvault-style'; // default | ios
+const theme = ref('light'); // 实际生效的 light/dark（由 mode 推导）
+const mode = ref('system');
+const themeStyle = ref('default');
 
-function applyTheme(t) {
-  theme.value = t;
-  document.documentElement.setAttribute('data-theme', t);
+const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+const systemPrefersDark = () => !!(mq && mq.matches);
+
+function applyTheme() {
+  const eff = mode.value === 'system' ? (systemPrefersDark() ? 'dark' : 'light') : mode.value;
+  theme.value = eff;
+  const root = document.documentElement;
+  root.setAttribute('data-theme', eff);
+  root.setAttribute('data-theme-style', themeStyle.value);
   try {
-    localStorage.setItem(THEME_KEY, t);
+    localStorage.setItem(THEME_KEY, mode.value);
+    localStorage.setItem(STYLE_KEY, themeStyle.value);
   } catch {
-    /* ignore */
+    /* localStorage 不可用时忽略 */
   }
 }
-function toggleTheme() {
-  applyTheme(theme.value === 'dark' ? 'light' : 'dark');
+function setMode(m) {
+  mode.value = m;
+  applyTheme();
 }
-applyTheme(theme.value); // 尽早应用，避免首屏闪白/闪黑
+function setStyle(s) {
+  themeStyle.value = s;
+  applyTheme();
+}
+function toggleTheme() {
+  setMode(theme.value === 'dark' ? 'light' : 'dark');
+}
+
+// 跟随系统模式下，系统配色偏好变化实时响应
+if (mq) mq.addEventListener('change', () => {
+  if (mode.value === 'system') applyTheme();
+});
+
+// 初始化：localStorage 优先，缺省跟随系统 + 默认风格
+try {
+  const m = localStorage.getItem(THEME_KEY);
+  if (m === 'light' || m === 'dark' || m === 'system') mode.value = m;
+  const s = localStorage.getItem(STYLE_KEY);
+  if (s === 'ios' || s === 'default') themeStyle.value = s;
+} catch {
+  /* ignore */
+}
+applyTheme(); // 尽早应用，避免首屏闪白/闪黑
 
 // ---- 列表加载 ----
 const PAGE = 30;
@@ -70,7 +97,7 @@ const KINDS = [
   { value: 'text', label: '文本', icon: 'message' },
   { value: 'voice', label: '语音', icon: 'mic' },
   { value: 'image', label: '图片', icon: 'image' },
-  { value: 'sticker', label: '表情', icon: 'smile' },
+  { value: 'sticker,emoji', label: '表情', icon: 'smile' },
   { value: 'video', label: '视频', icon: 'video' },
   { value: 'file', label: '文件', icon: 'file' },
 ];
@@ -194,6 +221,21 @@ function onSelectMessage(id) {
   newSub.value = selectedMessage.value?.sub || '';
   detailImgFailed.value = false;
   showDetail.value = true;
+}
+
+// 图片灯箱：从列表或详情打开，统一用「当前筛选下的图片 id 序列」便于左右切换
+function onOpenLightbox({ ids, index }) {
+  lightbox.ids = ids && ids.length ? ids : [];
+  lightbox.index = index || 0;
+  lightbox.show = true;
+}
+function openLightboxSingle(id) {
+  lightbox.ids = [id];
+  lightbox.index = 0;
+  lightbox.show = true;
+}
+function closeLightbox() {
+  lightbox.show = false;
 }
 function closeDetail() {
   showDetail.value = false;
@@ -446,6 +488,7 @@ watch(selectedMessage, (v) => {
             @select="onSelectMessage"
             @delete="doDelete"
             @load-more="loadMore"
+            @open-lightbox="onOpenLightbox"
           />
           <div v-if="loadingMore" class="more-state"><span class="spinner"></span> 加载中…</div>
         </div>
@@ -463,11 +506,23 @@ watch(selectedMessage, (v) => {
             <span class="detail-time">{{ new Date(selectedMessage.ts).toLocaleString('zh-CN') }}</span>
           </div>
 
-          <p v-if="selectedMessage.text" class="detail-text">{{ selectedMessage.text }}</p>
+          <p
+            v-if="selectedMessage.text"
+            class="detail-text"
+            :class="{ 'detail-text-emoji': selectedMessage.kind === 'emoji' }"
+            v-html="renderEmojiText(selectedMessage.text)"
+          ></p>
 
           <div v-if="(selectedMessage.kind === 'image' || selectedMessage.kind === 'sticker') && selectedMessage.media" class="block">
             <div class="section-label">图片</div>
-            <img v-if="!detailImgFailed" class="detail-img" :src="api.thumbUrl(selectedMessage.id, 800)" alt="图片" @error="detailImgFailed = true" />
+            <img
+              v-if="!detailImgFailed"
+              class="detail-img clickable"
+              :src="api.thumbUrl(selectedMessage.id, 800)"
+              alt="图片"
+              @error="detailImgFailed = true"
+              @click="openLightboxSingle(selectedMessage.id)"
+            />
             <div v-else class="media-missing"><Icon name="alert" :size="15" /> 媒体加载失败</div>
           </div>
 
@@ -478,11 +533,7 @@ watch(selectedMessage, (v) => {
 
           <div v-else-if="selectedMessage.kind === 'file' && selectedMessage.media" class="block">
             <div class="section-label">文件</div>
-            <a class="file-chip" :href="api.mediaUrl(selectedMessage.id)" target="_blank" rel="noopener" :download="selectedMessage.filename || ''">
-              <Icon name="file" :size="16" />
-              <span class="truncate">{{ selectedMessage.filename || '下载文件' }}</span>
-              <Icon name="download" :size="15" />
-            </a>
+            <FilePreview :message="selectedMessage" @open-lightbox="onOpenLightbox" />
           </div>
 
           <div v-else-if="['image', 'video', 'file', 'sticker'].includes(selectedMessage.kind) && !selectedMessage.media" class="block">
@@ -527,8 +578,22 @@ watch(selectedMessage, (v) => {
     </div>
 
     <ChannelDialog :show="showChannels" :channels="channels" @close="showChannels = false" @changed="onChannelsChanged" />
-    <SettingsDialog :show="showSettings" @close="showSettings = false" @saved="loadFolders" />
+    <SettingsDialog
+      :show="showSettings"
+      :mode="mode"
+      :theme-style="themeStyle"
+      @close="showSettings = false"
+      @saved="loadFolders"
+      @set-mode="setMode"
+      @set-style="setStyle"
+    />
     <AboutDialog :show="showAbout" @close="showAbout = false" />
+    <Lightbox
+      :show="lightbox.show"
+      :ids="lightbox.ids"
+      v-model:index="lightbox.index"
+      @close="closeLightbox"
+    />
     <ToastHost />
   </div>
 </template>
@@ -880,6 +945,11 @@ watch(selectedMessage, (v) => {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.detail-text-emoji {
+  font-size: 40px;
+  line-height: 1.4;
+  letter-spacing: 4px;
+}
 .block {
   display: flex;
   flex-direction: column;
@@ -892,6 +962,13 @@ watch(selectedMessage, (v) => {
   border-radius: var(--r-md);
   border: 1px solid var(--c-border);
   background: var(--c-surface-2);
+}
+.detail-img.clickable {
+  cursor: zoom-in;
+  transition: filter var(--t-fast);
+}
+.detail-img.clickable:hover {
+  filter: brightness(0.96);
 }
 .detail-audio {
   width: 100%;
