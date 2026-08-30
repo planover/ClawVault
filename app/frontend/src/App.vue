@@ -28,7 +28,28 @@ const showAbout = ref(false);
 const lightbox = reactive({ show: false, ids: [], index: 0 });
 const detailImgFailed = ref(false);
 const newCat = ref('');
+const newCatNew = ref(''); // 「＋ 新建分类…」时输入的新名字
 const newSub = ref('');
+
+// 实际提交到后端的主分类：选了已有就直接用；选了「新建」则用输入框内容
+const finalCat = computed(() =>
+  newCat.value === '__new__' ? newCatNew.value.trim() : newCat.value.trim(),
+);
+// 「＋ 新建分类…」时主分类必填；否则有选项即可
+const canSaveReclass = computed(() =>
+  newCat.value === '__new__' ? !!newCatNew.value.trim() : !!newCat.value,
+);
+// 当前主分类下已有的子分类，给子分类输入框做候选（datalist 仍可手输入新子分类）
+const subOptions = computed(() => {
+  const c = newCat.value;
+  if (!c || c === '__new__') return [];
+  for (const ch of folders.value) {
+    for (const cc of ch.categories || []) {
+      if (cc.name === c) return (cc.subs || []).map((s) => s.name).sort();
+    }
+  }
+  return [];
+});
 
 // ---- 主题：模式（跟随系统 / 浅色 / 深色）+ 风格，均持久化 ----
 // 风格：default（默认）/ ios-classic（iOS 经典）/ ios27（iOS 27 强玻璃质感），
@@ -224,6 +245,7 @@ function onSelectMessage(id) {
   selectedId.value = id;
   selectedMessage.value = messages.value.find((m) => m.id === id) || null;
   newCat.value = selectedMessage.value?.category || '';
+  newCatNew.value = '';
   newSub.value = selectedMessage.value?.sub || '';
   detailImgFailed.value = false;
   showDetail.value = true;
@@ -251,10 +273,13 @@ function toggleSide() {
 }
 
 async function doReclassify() {
-  if (!selectedMessage.value || !newCat.value.trim()) return;
+  if (!selectedMessage.value || !canSaveReclass.value) return;
   try {
-    const updated = await api.reclassify(selectedMessage.value.id, newCat.value.trim(), newSub.value.trim());
+    const updated = await api.reclassify(selectedMessage.value.id, finalCat.value, newSub.value.trim());
     selectedMessage.value = updated;
+    // 选过「新建」后，把新分类正式设为已选，下次重新分类直接选到它
+    if (newCat.value === '__new__') newCat.value = newCatNew.value.trim();
+    newCatNew.value = '';
     await Promise.all([loadMessages(true), loadFolders()]);
     toast.success('已重新分类');
   } catch (e) {
@@ -560,13 +585,30 @@ watch(selectedMessage, (v) => {
 
           <div class="block reclass">
             <div class="section-label">重新分类</div>
-            <div class="reclass-row">
-              <input class="input" v-model="newCat" list="cv-cats" placeholder="主分类" />
-              <datalist id="cv-cats">
-                <option v-for="c in categoryOptions" :key="c" :value="c"></option>
+            <div class="reclass-fields">
+              <select class="input" v-model="newCat" aria-label="主分类">
+                <option value="">— 选择已有分类 —</option>
+                <option v-for="c in categoryOptions" :key="c" :value="c">{{ c }}</option>
+                <option value="__new__">＋ 新建分类…</option>
+              </select>
+              <input
+                v-if="newCat === '__new__'"
+                class="input"
+                v-model="newCatNew"
+                placeholder="新分类名称"
+                aria-label="新分类名称"
+              />
+              <input
+                class="input"
+                v-model="newSub"
+                list="cv-subs"
+                placeholder="子分类（可选）"
+                aria-label="子分类"
+              />
+              <datalist id="cv-subs">
+                <option v-for="s in subOptions" :key="s" :value="s"></option>
               </datalist>
-              <input class="input" v-model="newSub" placeholder="子分类（可选）" />
-              <button class="btn sm" :disabled="!newCat.trim()" @click="doReclassify">保存</button>
+              <button class="btn sm" :disabled="!canSaveReclass" @click="doReclassify">保存</button>
             </div>
           </div>
 
@@ -1011,13 +1053,13 @@ watch(selectedMessage, (v) => {
   padding-top: 16px;
   border-top: 1px solid var(--c-border);
 }
-.reclass-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.reclass-fields {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
-.reclass-row .btn {
-  grid-column: 1 / -1;
+.reclass-fields .btn {
+  align-self: flex-start;
 }
 .detail-actions {
   padding-top: 4px;
@@ -1143,10 +1185,6 @@ watch(selectedMessage, (v) => {
   }
   .list-count {
     margin-left: 0;
-  }
-  /* 详情此时是全宽覆盖层，重新分类恢复双列更省纵向空间 */
-  .reclass-row {
-    grid-template-columns: 1fr 1fr;
   }
 }
 

@@ -1,64 +1,75 @@
 /* =========================================================================
    ClawVault · iOS 27 主题（强玻璃质感 Liquid Glass）
    - 通过 [data-theme-style='ios27'] 启用，仅覆盖语义变量 + 增强既有结构，不改 DOM
-   - 半透明毛玻璃：面板以 rgba 叠色 + backdrop-filter 大半径模糊
-   - 细腻高光边框：1px 亮边 + 顶部内阴影高光，模拟玻璃边缘折射
-   - 层次化景深：多层投影叠加，越浮起的层阴影越远、越柔
-   - 光折射效果：body 层彩色光斑（径向渐变）透过半透明面板，形成折射光晕
+   - 玻璃三件套：半透明叠色 + 大半径模糊 + 多层高光（顶部光带 + 斜向折射 + 边缘亮环）
+   - 光折射：body 层多色径向光斑透过半透明面板；面板本身有 135° 斜向高光 + 顶部 1px 内高光
+   - 层次化景深：投影随浮起层级加重；玻璃面板带 0.5px 白色外环，模拟玻璃边缘的菲涅尔反射
    - 完整适配浅色与深色（data-theme='dark'）
+
+   与「iOS 经典」的区别：经典版是「淡毛玻璃」（弱模糊、轻投影、偏平面），
+   27 版是「Liquid Glass」（强模糊 / 多层高光 / 折射光斑 / 边缘亮环），整体更通透、更立体。
    ========================================================================= */
 
 /* ---------------- iOS 27 · 浅色 ---------------- */
 [data-theme-style='ios27'] {
-  --c-primary: #5e5ce6; /* systemIndigo */
+  --c-primary: #5e5ce6;
   --c-primary-hover: #7d7aff;
   --c-primary-active: #4b4bbf;
-  --c-primary-soft: rgba(94, 92, 230, 0.14);
-  --c-primary-soft-2: rgba(94, 92, 230, 0.22);
+  --c-primary-soft: rgba(94, 92, 230, 0.16);
+  --c-primary-soft-2: rgba(94, 92, 230, 0.26);
   --c-primary-ring: rgba(94, 92, 230, 0.28);
 
-  /* 半透明叠层：数值越低越通透，让底层光斑透上来 */
-  --c-bg: rgba(255, 255, 255, 0.38);
-  --c-surface: rgba(255, 255, 255, 0.62);
-  --c-surface-2: rgba(255, 255, 255, 0.44);
-  --c-surface-3: rgba(255, 255, 255, 0.7);
+  /* 更通透的底色，让底层光斑透上来 */
+  --c-bg: rgba(255, 255, 255, 0.3);
+  --c-surface: rgba(255, 255, 255, 0.58);
+  --c-surface-2: rgba(255, 255, 255, 0.38);
+  --c-surface-3: rgba(255, 255, 255, 0.72);
 
-  --c-border: rgba(255, 255, 255, 0.78); /* 玻璃高光边 */
-  --c-border-strong: rgba(15, 23, 42, 0.1);
+  /* 玻璃高光边（亮）+ 细描边（暗）双层 */
+  --c-border: rgba(255, 255, 255, 0.85);
+  --c-border-strong: rgba(15, 23, 42, 0.08);
 
-  --c-text: #0f172a;
-  --c-text-2: #334155;
-  --c-muted: #566175;
-  --c-faint: #7c8798;
+  --c-text: #0b0b14;
+  --c-text-2: #2c2c3a;
+  --c-muted: #535369;
+  --c-faint: #7a7a8e;
 
   --c-success: #10b981;
-  --c-success-bg: rgba(16, 185, 129, 0.14);
+  --c-success-bg: rgba(16, 185, 129, 0.16);
   --c-warn: #f59e0b;
-  --c-warn-bg: rgba(245, 158, 11, 0.16);
+  --c-warn-bg: rgba(245, 158, 11, 0.18);
   --c-danger: #ef4444;
   --c-danger-hover: #dc2626;
-  --c-danger-bg: rgba(239, 68, 68, 0.13);
+  --c-danger-bg: rgba(239, 68, 68, 0.14);
   --c-danger-border: rgba(239, 68, 68, 0.32);
 
-  --c-hover: rgba(255, 255, 255, 0.5);
-  --c-active: rgba(94, 92, 230, 0.16);
+  --c-hover: rgba(255, 255, 255, 0.55);
+  --c-active: rgba(94, 92, 230, 0.2);
 
-  /* 更圆润的液滴感圆角 */
-  --r-xs: 10px;
-  --r-sm: 12px;
-  --r-md: 16px;
-  --r-lg: 20px;
-  --r-xl: 26px;
+  /* Liquid Glass 圆角：比经典更圆润 */
+  --r-xs: 11px;
+  --r-sm: 14px;
+  --r-md: 18px;
+  --r-lg: 22px;
+  --r-xl: 28px;
   --r-full: 999px;
 
-  /* 层次化景深：多层投影 + 顶部内高光（玻璃边缘折射） */
-  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04),
+  /* 层次化景深：玻璃面板 + 边缘亮环 + 顶部内高光 */
+  --shadow-xs:
+    0 1px 2px rgba(15, 23, 42, 0.05),
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.1), 0 2px 8px rgba(15, 23, 42, 0.05),
+  --shadow-sm:
+    0 4px 12px rgba(15, 23, 42, 0.06),
+    0 1px 3px rgba(15, 23, 42, 0.04),
     inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  --shadow-lg: 0 30px 70px rgba(15, 23, 42, 0.18), 0 8px 24px rgba(15, 23, 42, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  --shadow-md:
+    0 14px 36px rgba(15, 23, 42, 0.1),
+    0 4px 12px rgba(15, 23, 42, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --shadow-lg:
+    0 36px 80px rgba(15, 23, 42, 0.2),
+    0 12px 32px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 /* ---------------- iOS 27 · 深色 ---------------- */
@@ -66,17 +77,17 @@
   --c-primary: #8b7bff;
   --c-primary-hover: #a295ff;
   --c-primary-active: #b3a8ff;
-  --c-primary-soft: rgba(139, 123, 255, 0.16);
-  --c-primary-soft-2: rgba(139, 123, 255, 0.26);
-  --c-primary-ring: rgba(139, 123, 255, 0.32);
+  --c-primary-soft: rgba(139, 123, 255, 0.18);
+  --c-primary-soft-2: rgba(139, 123, 255, 0.28);
+  --c-primary-ring: rgba(139, 123, 255, 0.34);
 
-  --c-bg: rgba(10, 10, 16, 0.5);
-  --c-surface: rgba(30, 30, 40, 0.55);
-  --c-surface-2: rgba(255, 255, 255, 0.055);
+  --c-bg: rgba(10, 10, 18, 0.42);
+  --c-surface: rgba(30, 30, 42, 0.5);
+  --c-surface-2: rgba(255, 255, 255, 0.05);
   --c-surface-3: rgba(255, 255, 255, 0.1);
 
-  --c-border: rgba(255, 255, 255, 0.14);
-  --c-border-strong: rgba(255, 255, 255, 0.22);
+  --c-border: rgba(255, 255, 255, 0.18);
+  --c-border-strong: rgba(255, 255, 255, 0.26);
 
   --c-text: #f5f6fa;
   --c-text-2: #c9cedb;
@@ -84,29 +95,37 @@
   --c-faint: #7a8296;
 
   --c-success: #34d399;
-  --c-success-bg: rgba(52, 211, 153, 0.16);
+  --c-success-bg: rgba(52, 211, 153, 0.18);
   --c-warn: #fbbf24;
-  --c-warn-bg: rgba(251, 191, 36, 0.16);
+  --c-warn-bg: rgba(251, 191, 36, 0.18);
   --c-danger: #fb7185;
   --c-danger-hover: #f43f5e;
-  --c-danger-bg: rgba(251, 113, 133, 0.16);
-  --c-danger-border: rgba(251, 113, 133, 0.34);
+  --c-danger-bg: rgba(251, 113, 133, 0.18);
+  --c-danger-border: rgba(251, 113, 133, 0.36);
 
-  --c-hover: rgba(255, 255, 255, 0.08);
-  --c-active: rgba(139, 123, 255, 0.18);
+  --c-hover: rgba(255, 255, 255, 0.1);
+  --c-active: rgba(139, 123, 255, 0.2);
 
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  --shadow-md: 0 12px 34px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.45),
+  --shadow-xs:
+    0 1px 2px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.09);
-  --shadow-lg: 0 34px 80px rgba(0, 0, 0, 0.7), 0 10px 28px rgba(0, 0, 0, 0.5),
+  --shadow-sm:
+    0 4px 14px rgba(0, 0, 0, 0.55),
+    0 1px 3px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --shadow-md:
+    0 16px 40px rgba(0, 0, 0, 0.6),
+    0 4px 12px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --shadow-lg:
+    0 40px 90px rgba(0, 0, 0, 0.7),
+    0 14px 36px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-/* ---------------- 光折射底层 ----------------
-   body::before 铺一层固定的彩色光斑；#app 提到其上，面板以半透明色透出光晕，
-   形成"光穿过玻璃"的折射观感。伪元素不改变 DOM 结构。 */
+/* ---------------- 光折射底层（fixed，多色径向光斑） ----------------
+   5 个柔和色斑：靛蓝 / 青 / 粉 / 翠 / 紫，位置错落、整体更"液态"。
+   透过半透明面板形成彩色光晕——这是 iOS 27 区别于经典版的核心观感。 */
 [data-theme-style='ios27'] body::before {
   content: '';
   position: fixed;
@@ -114,87 +133,129 @@
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(58% 44% at 12% 6%, rgba(99, 102, 241, 0.3), transparent 60%),
-    radial-gradient(52% 38% at 88% 10%, rgba(56, 189, 248, 0.28), transparent 62%),
-    radial-gradient(66% 48% at 78% 92%, rgba(236, 72, 153, 0.22), transparent 64%),
-    radial-gradient(48% 38% at 22% 88%, rgba(16, 185, 129, 0.2), transparent 60%);
+    radial-gradient(62% 48% at 8% 4%, rgba(99, 102, 241, 0.32), transparent 62%),
+    radial-gradient(58% 44% at 92% 10%, rgba(56, 189, 248, 0.28), transparent 64%),
+    radial-gradient(70% 50% at 78% 92%, rgba(236, 72, 153, 0.24), transparent 66%),
+    radial-gradient(50% 40% at 18% 88%, rgba(16, 185, 129, 0.2), transparent 62%),
+    radial-gradient(36% 28% at 50% 52%, rgba(168, 85, 247, 0.16), transparent 70%);
+  animation: ios27-drift 24s ease-in-out infinite alternate;
 }
 [data-theme-style='ios27'][data-theme='dark'] body::before {
   background:
-    radial-gradient(58% 44% at 12% 6%, rgba(99, 102, 241, 0.34), transparent 62%),
-    radial-gradient(52% 38% at 88% 10%, rgba(56, 189, 248, 0.26), transparent 64%),
-    radial-gradient(66% 48% at 78% 92%, rgba(236, 72, 153, 0.2), transparent 66%),
-    radial-gradient(48% 38% at 22% 88%, rgba(16, 185, 129, 0.16), transparent 62%);
+    radial-gradient(62% 48% at 8% 4%, rgba(99, 102, 241, 0.36), transparent 64%),
+    radial-gradient(58% 44% at 92% 10%, rgba(56, 189, 248, 0.28), transparent 66%),
+    radial-gradient(70% 50% at 78% 92%, rgba(236, 72, 153, 0.22), transparent 68%),
+    radial-gradient(50% 40% at 18% 88%, rgba(16, 185, 129, 0.16), transparent 64%),
+    radial-gradient(36% 28% at 50% 52%, rgba(168, 85, 247, 0.18), transparent 72%);
 }
-/* 应用内容抬到光斑之上，保证文字与交互不受影响 */
 [data-theme-style='ios27'] #app {
   position: relative;
   z-index: 1;
 }
 
-/* ---------------- 毛玻璃面板：顶栏 / 侧栏 / 详情 ----------------
-   大半径模糊 + 斜向渐变模拟玻璃折射高光 + 1px 亮边 + 景深投影。 */
+/* 极慢速漂移：让光斑像在液体里缓缓流动，呼吸感而非静态 */
+@keyframes ios27-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(-1.2%, 0.8%, 0) scale(1.04); }
+  100% { transform: translate3d(1.2%, -0.8%, 0) scale(1.02); }
+}
+
+/* ---------------- 玻璃面板通用规则（顶栏 / 侧栏 / 详情） ----------------
+   三层背景叠：① 顶光带 ② 斜向折射 ③ 半透明色
+   再加：边缘亮环（box-shadow 0 0 0 0.5px） + 景深投影 + 大半径模糊。
+   关键：saturate(200%) 提亮透出来的光斑，blur 让面板后的彩色柔和成光晕。 */
 [data-theme-style='ios27'] .app .topbar,
 [data-theme-style='ios27'] .app .sidebar,
-[data-theme-style='ios27'] .app .detail {
+[data-theme-style='ios27'] .app .detail,
+[data-theme-style='ios27'] .modal {
   background-color: var(--c-surface);
-  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 46%);
-  backdrop-filter: blur(30px) saturate(190%);
-  -webkit-backdrop-filter: blur(30px) saturate(190%);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52) 0%, rgba(255, 255, 255, 0) 38%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.46) 0%, rgba(255, 255, 255, 0) 50%);
+  backdrop-filter: blur(36px) saturate(200%);
+  -webkit-backdrop-filter: blur(36px) saturate(200%);
   border-color: var(--c-border);
+  box-shadow:
+    0 0 0 0.5px var(--c-border),
+    var(--shadow-sm);
 }
 [data-theme-style='ios27'] .app .topbar {
-  box-shadow: var(--shadow-sm);
+  /* 顶栏飞得最高，投影加重一点 */
+  box-shadow:
+    0 0 0 0.5px var(--c-border),
+    0 8px 24px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 [data-theme-style='ios27'] .app .detail {
   border-left: 1px solid var(--c-border);
 }
 [data-theme-style='ios27'][data-theme='dark'] .app .topbar,
 [data-theme-style='ios27'][data-theme='dark'] .app .sidebar,
-[data-theme-style='ios27'][data-theme='dark'] .app .detail {
-  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 46%);
+[data-theme-style='ios27'][data-theme='dark'] .app .detail,
+[data-theme-style='ios27'][data-theme='dark'] .modal {
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 38%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 50%);
 }
 
-/* ---------------- 毛玻璃卡片：消息卡 / 弹层 / 骨架屏 ----------------
-   卡片层级比面板低一层：模糊半径与投影都更小，形成前后景深。 */
+/* 弹层遮罩：比经典版更轻，但仍带点毛玻璃 */
+[data-theme-style='ios27'] .modal-mask {
+  background: rgba(10, 10, 24, 0.32);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* ---------------- 玻璃卡片：消息卡 / 骨架屏 / 文件头 / 新增通道卡 ---------------- */
 [data-theme-style='ios27'] .app .card,
 [data-theme-style='ios27'] .app .skeleton-card,
-[data-theme-style='ios27'] .modal,
 [data-theme-style='ios27'] .app .fp-head,
 [data-theme-style='ios27'] .app .add-card {
   background-color: var(--c-surface);
-  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0) 50%);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.46) 0%, rgba(255, 255, 255, 0) 35%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0) 55%);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
   border-color: var(--c-border);
+  box-shadow:
+    0 0 0 0.5px var(--c-border),
+    var(--shadow-xs);
 }
 [data-theme-style='ios27'] .app .card:hover {
-  box-shadow: var(--shadow-md);
+  box-shadow:
+    0 0 0 0.5px var(--c-border),
+    var(--shadow-md);
 }
 [data-theme-style='ios27'][data-theme='dark'] .app .card,
 [data-theme-style='ios27'][data-theme='dark'] .app .skeleton-card,
-[data-theme-style='ios27'][data-theme='dark'] .modal,
 [data-theme-style='ios27'][data-theme='dark'] .app .fp-head,
 [data-theme-style='ios27'][data-theme='dark'] .app .add-card {
-  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 50%);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0) 35%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 55%);
 }
 
-/* ---------------- 控件：分段控件 / 输入框 / 按钮 ----------------
-   胶囊容器做磨砂底，选中态用实色块 + 轻投影，突出"浮起"的层级。 */
+/* ---------------- 控件：分段 / 搜索框 / 输入框 ---------------- */
 [data-theme-style='ios27'] .app .segmented,
 [data-theme-style='ios27'] .app .seg-group,
 [data-theme-style='ios27'] .app .search-input,
-[data-theme-style='ios27'] .modal .input {
+[data-theme-style='ios27'] .modal .input,
+[data-theme-style='ios27'] .app .input {
   background-color: var(--c-surface-3);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-color: var(--c-border-strong);
 }
 [data-theme-style='ios27'] .app .seg.active,
 [data-theme-style='ios27'] .modal .seg.on {
-  box-shadow: var(--shadow-xs);
+  background-color: var(--c-surface);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
+  box-shadow:
+    0 0 0 0.5px var(--c-border),
+    var(--shadow-xs);
 }
 
-/* 半透明面板上的滚动条同样保持克制，避免破坏玻璃通透感 */
+/* 滚动条：在玻璃上保持克制，不破坏通透感 */
 [data-theme-style='ios27'] ::-webkit-scrollbar-thumb {
   background: var(--c-border-strong);
 }

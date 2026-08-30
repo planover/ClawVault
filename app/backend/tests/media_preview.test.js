@@ -113,6 +113,45 @@ after(() => {
   if (storage?.db) storage.db.close();
 });
 
+test('GET /api/media/:id?inline=1 使用 inline 处置（PDF 才能内嵌预览）', async () => {
+  const inline = await fetch(`${baseUrl}/api/media/${zipId}?inline=1`);
+  assert.equal(inline.status, 200);
+  assert.ok((inline.headers.get('content-disposition') || '').startsWith('inline'));
+
+  const attach = await fetch(`${baseUrl}/api/media/${zipId}`);
+  assert.equal(attach.status, 200);
+  assert.ok((attach.headers.get('content-disposition') || '').startsWith('attachment'));
+});
+
+// 回归：中文文件名在 Content-Disposition 里不能直接进 legacy `filename="..."`，
+// Node 的 setHeader 会因非 ASCII 字节抛 ERR_INVALID_CHAR、整条响应 500。
+// 修复后：legacy 字段被跳过、只走 filename*=UTF-8''，HTTP 必须 200 且 filename* 存在。
+test('GET /api/media/:id 对中文文件名不抛 ERR_INVALID_CHAR（v1.0.29 回归）', async () => {
+  const cnName = 'X26-40车，工作联络单.pdf';
+  fs.writeFileSync(path.join(archiveRoot, cnName), '%PDF-1.4\n%fake\n');
+  const rec = storage.saveMessage({
+    channelId: 'c1',
+    channelName: '测试通道',
+    peer: 'peer1',
+    text: '',
+    kind: 'file',
+    category: '未分类',
+    sub: '',
+    filename: cnName,
+  });
+  storage.setMedia(rec.id, cnName);
+  const r = await fetch(`${baseUrl}/api/media/${rec.id}?inline=1`);
+  assert.equal(r.status, 200);
+  const cd = r.headers.get('content-disposition') || '';
+  assert.ok(cd.startsWith('inline'), `unexpected disposition: ${cd}`);
+  assert.ok(
+    /filename\*=UTF-8''/.test(cd),
+    `expected RFC 5987 filename* fallback for non-ASCII name, got: ${cd}`,
+  );
+  const buf = await r.arrayBuffer();
+  assert.ok(buf.byteLength > 0, 'expected non-empty body for non-ASCII filename');
+});
+
 test('GET /api/media/list/:id 列出 zip 内文件', async () => {
   const res = await fetch(`${baseUrl}/api/media/list/${zipId}`);
   assert.equal(res.status, 200);

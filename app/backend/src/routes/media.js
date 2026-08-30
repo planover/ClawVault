@@ -44,8 +44,15 @@ const MIME = {
 // 与语音路由一致，强制校验路径落在归档根内，防止 media 字段被构造导致路径穿越。
 function contentDisposition(filename) {
   const plain = String(filename).replace(/["\\]/g, '');
+  // RFC 6266：legacy `filename="..."` 只对可打印 ASCII 安全。Node 的 setHeader
+  // 会拒绝带非 ASCII 字节的 header 值（抛 ERR_INVALID_CHAR，整条响应被阻断，
+  // 不止 header 本身）。非 ASCII 文件名跳过 legacy 字段，只走 filename*=UTF-8''...，
+  // 现代浏览器（Chromium / Firefox / Safari）均支持。代价：极少数老浏览器会回退
+  // 到一个由浏览器生成的文件名——远比"整条响应 500"好。
+  const isAscii = /^[\x20-\x7E]*$/.test(plain);
   const encoded = encodeURIComponent(plain).replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `attachment; filename="${plain}"; filename*=UTF-8''${encoded}`;
+  const legacy = isAscii ? `filename="${plain}"; ` : '';
+  return `attachment; ${legacy}filename*=UTF-8''${encoded}`;
 }
 
 // 把 Office 渲染出的 HTML 包成独立、自带排版的文档（iframe 是隔离文档，
