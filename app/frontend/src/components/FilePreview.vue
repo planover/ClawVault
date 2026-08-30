@@ -1,6 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
 import { api } from '../api.js';
+import { inFnosHost, revealInFileManager } from '../fnos.js';
+import { toast } from '../toast.js';
 import Icon from './Icon.vue';
 
 // 文件消息预览：根据类型在线预览常见格式，无法预览时给出明确提示并提供「下载 / 外部打开」。
@@ -25,6 +27,7 @@ const officeFailed = ref(false);
 const archiveEntries = ref([]);
 const archiveError = ref(false);
 const archiveLoading = ref(false);
+const inHost = ref(false); // 是否运行在飞牛宿主窗口（决定能否调原生文件管理器）
 
 const id = computed(() => props.message?.id);
 const hasMedia = computed(() => !!props.message?.media);
@@ -148,8 +151,23 @@ function openLightbox() {
 function externalOpen() {
   window.open(downloadUrl.value, '_blank', 'noopener');
 }
+// 借助飞牛：在原生文件管理器中定位该文件，用户即可用系统已装应用
+// （PDF 阅读器、Office 等，由 fnOS 的文件关联决定）打开它。
+// 这比猜各应用的 deep-link 协议可靠得多——协议未知也能用。
+async function openInFileManager() {
+  const p = info.value?.absPath;
+  if (!p) {
+    toast.error('尚未获取到文件路径，请稍候再试');
+    return;
+  }
+  const ok = await revealInFileManager(p);
+  if (!ok) toast.error('当前环境不支持打开文件管理器');
+}
 
-onMounted(loadInfo);
+onMounted(async () => {
+  inHost.value = await inFnosHost();
+  loadInfo();
+});
 watch(id, loadInfo);
 </script>
 
@@ -172,7 +190,16 @@ watch(id, loadInfo);
           </span>
         </div>
         <div class="fp-acts">
-          <button class="fp-act" :title="'外部打开'" aria-label="外部打开" @click="externalOpen">
+          <button
+            v-if="inHost"
+            class="fp-act"
+            title="在飞牛文件管理器中打开（可用系统已装应用打开）"
+            aria-label="在飞牛文件管理器中打开"
+            @click="openInFileManager"
+          >
+            <Icon name="folder" :size="16" />
+          </button>
+          <button class="fp-act" title="外部打开" aria-label="外部打开" @click="externalOpen">
             <Icon name="external" :size="16" />
           </button>
           <a class="fp-act" :href="downloadUrl" :download="downloadName" title="下载" aria-label="下载">

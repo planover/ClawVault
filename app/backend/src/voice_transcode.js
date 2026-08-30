@@ -7,17 +7,29 @@ import { detectMediaExt } from './ilink_crypto.js';
 
 const PLAYABLE_AUDIO = ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'webm'];
 
-function isSilk(buf) {
-  if (!buf || buf.length < 10) return false;
-  const head = buf.toString('ascii', 0, 9);
-  if (head === '#!SILK_V3') return true;
+// 该扩展名是否是浏览器可直接播放的音频。
+// 语音路由用它判断历史文件需不需要"现取现转"——
+// 早期 isSilk 的 bug 让一批语音以 .comc2 裸 SILK 落盘，这些老数据必须靠即时转码救回来。
+export function isPlayableExt(ext) {
+  return PLAYABLE_AUDIO.includes(String(ext || '').toLowerCase());
+}
+
+// 微信 SILK 头的两种形态（NAS 真机取样确认）：
+//   1) 标准：  "#!SILK_V3..."
+//   2) 带前缀："\x02#!SILK_V3..."（多一个 0x02 字节，微信 comc2 语音常见）
+// 注意下标：带前缀时 'SILK' 位于 3..6，**不是** 1..4。
+// 早期写成 1..5（取到 '#!SI'）导致整批语音都被判成"不是 SILK"，
+// 于是不转码、以 .comc2 存裸 SILK，浏览器无法解码 → 语音条显示 0:00。
+export function isSilk(buf) {
+  if (!buf || buf.length < 12) return false;
+  const head = buf.toString('ascii', 0, 10);
+  if (head.startsWith('#!SILK_V3')) return true;
   if (buf.toString('ascii', 0, 4) === 'SILK') return true;
-  // 微信 SILK 有时以 0x02 开头，紧跟 "SILK"
-  if (buf[0] === 0x02 && buf.toString('ascii', 1, 5) === 'SILK') return true;
+  if (buf[0] === 0x02 && buf.toString('ascii', 3, 7) === 'SILK') return true;
   return false;
 }
 
-function isAmr(buf) {
+export function isAmr(buf) {
   return buf && buf.length >= 6 && buf.toString('ascii', 0, 5) === '#!AMR';
 }
 
@@ -71,6 +83,10 @@ function ffmpegPipe(input, outputExt = 'mp3') {
 }
 
 // 尝试用 silk-wasm 把 SILK 解码为 PCM 并封装成 WAV。
+// 要点（NAS 真机实测）：
+//   - 必须把 **原始** buffer 交给 decode()，库自己会处理 "#!SILK_V3" 头与 0x02 前缀；
+//     任何"帮他剥前缀/跳 magic"的预处理都会让解码失败（实测 strip 后全部 FAIL）。
+//   - 采样率按微信常见值依次尝试，第一个成功的即可。
 async function silkToWav(buf) {
   let silk;
   try {
@@ -79,11 +95,19 @@ async function silkToWav(buf) {
     throw new Error(`silk-wasm 未安装或导入失败: ${e.message}`);
   }
   if (!silk.decode) throw new Error('silk-wasm 没有 decode 导出');
-  // 微信语音常见采样率 24000Hz；如解码失败可让调用方再试其他采样率。
-  const res = await silk.decode(buf, 24000);
-  if (!res || !res.data) throw new Error('silk-wasm 返回空数据');
-  const pcm = Buffer.from(res.data.buffer || res.data, res.data.byteOffset || 0, res.data.byteLength);
-  return pcmToWav(pcm, 24000, 1, 16);
+  let lastErr = null;
+  for (const sr of [24000, 16000, 12000, 8000]) {
+    try {
+      const res = await silk.decode(buf, sr); // 原样传入，不做任何裁剪
+      if (!res || !res.data) throw new Error('silk-wasm 返回空数据');
+      const pcm = Buffer.from(res.data.buffer || res.data, res.data.byteOffset || 0, res.data.byteLength);
+      if (!pcm.length) throw new Error('解码结果为空');
+      return pcmToWav(pcm, sr, 1, 16);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(`silk-wasm 解码失败（已试 24000/16000/12000/8000）: ${lastErr?.message}`);
 }
 
 // 把解密后的语音 buffer 转码成浏览器可播放格式。

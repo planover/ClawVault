@@ -22,12 +22,25 @@ import createAboutRouter from './routes/about.js';
 import { ReceiptService } from './receipt.js';
 
 // ---- 设置持久化（覆盖默认配置） ----
+// settingsVersion：写入 settings.json，用来区分"老版本留下的无意义遗留值"与
+// "用户显式选过的值"。没有该标记的文件视为 1.0.28 之前保存的。
+const SETTINGS_VERSION = 1;
+
 function loadSettings() {
   const p = path.join(config.dataDir, 'settings.json');
   try {
     const s = JSON.parse(fs.readFileSync(p, 'utf8'));
     if (s.ai) Object.assign(config.ai, s.ai);
-    if (s.ingest) Object.assign(config.ingest, s.ingest);
+    if (s.ingest) {
+      const patch = { ...s.ingest };
+      // 迁移：auto_reply_receipt（消息接收回执）在 v1.0.28 才真正接上代码。
+      // 更早版本保存的 settings.json 里往往带着 auto_reply_receipt:false，
+      // 但当时没有任何代码读它——属于无意义遗留值。若沿用它会永久覆盖新默认值
+      // （true），用户升级后就会看到"回执功能不生效"。
+      // 因此：文件里没有 settingsVersion 标记时丢弃该遗留值，采用新默认。
+      if (!s.settingsVersion) delete patch.auto_reply_receipt;
+      Object.assign(config.ingest, patch);
+    }
     if (s.classification) Object.assign(config.classification, s.classification);
     if (s.archiveRoot) config.archiveRoot = s.archiveRoot;
   } catch {
@@ -42,6 +55,7 @@ function saveSettings() {
     p,
     JSON.stringify(
       {
+        settingsVersion: SETTINGS_VERSION,
         ai: config.ai,
         ingest: config.ingest,
         classification: config.classification,

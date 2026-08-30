@@ -191,6 +191,10 @@ export default function createMediaRouter({ storage }) {
       size: stat.size,
       mime,
       ext,
+      // 绝对路径：供前端调飞牛原生"在文件管理器中打开"，
+      // 用户即可用系统已装应用（如 PDF 阅读器 / Office）打开该文件。
+      // 该路径仅对已登录的飞牛用户可见，且始终落在归档根内（上面已校验过）。
+      absPath: abs,
     });
   });
 
