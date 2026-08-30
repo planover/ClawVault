@@ -7,7 +7,6 @@ import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 import tar from 'tar';
-import { Storage } from '../src/storage.js';
 import createMediaRouter from '../src/routes/media.js';
 
 // 文件预览相关路由的回归测试：
@@ -15,14 +14,33 @@ import createMediaRouter from '../src/routes/media.js';
 //   /api/media/preview/:id → Office 文档（docx）转 HTML
 //   /api/media/:id?inline=1 → 内联预览（PDF iframe 依赖 inline 处置）
 //
-// 注意：Storage / HTTP server 必须在 before 里创建、after 里显式关闭。
-// 此前把 Storage 放在模块顶层，Node 24 + better-sqlite3 11.10 会在进程退出阶段
-// 析构 Statement 时崩溃（Assertion failed: (env) != nullptr），导致 CI 红。
-
+// 这里用最小假 Storage 而不是真实 Storage，原因有二：
+//   1) 本测试只验证媒体路由（路径解析/MIME/处置/预览转换），与存储层无关，
+//      用假对象能让关注点更集中、跑得更快；
+//   2) 真实 Storage 会经 better-sqlite3 创建预编译语句，在 Node 24 下若语句被 GC
+//      析构会触发原生断言 Assertion failed: (env) != nullptr 直接中止进程（本机
+//      Node 22 不复现，CI 的 Node 24 会红）。媒体路由只用到 getMessage 与 archiveRoot，
+//      因此用假 Storage 能彻底规避该原生模块问题。
+//
+// 假的 storage 必须提供 media.js 里 resolveMedia 用到的两个成员。
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-media-'));
 const archiveRoot = path.join(tmp, 'archive');
-const dataDir = path.join(tmp, 'data');
 fs.mkdirSync(archiveRoot, { recursive: true });
+
+const messages = new Map();
+const storage = {
+  archiveRoot,
+  getMessage(id) {
+    return messages.get(Number(id)) || null;
+  },
+};
+
+let nextId = 1;
+function register(name) {
+  const id = nextId++;
+  messages.set(id, { id, kind: 'file', filename: name, media: name });
+  return id;
+}
 
 function startServer(app) {
   return new Promise((resolve) => {
@@ -31,7 +49,6 @@ function startServer(app) {
   });
 }
 
-let storage;
 let server;
 let baseUrl;
 let zipId;
@@ -39,8 +56,6 @@ let tgzId;
 let docxId;
 
 before(async () => {
-  storage = new Storage({ dataDir, archiveRoot });
-
   // 构造测试用 zip
   const zip = new AdmZip();
   zip.addFile('a.txt', Buffer.from('hello'));
@@ -83,23 +98,9 @@ before(async () => {
   );
   dz.writeZip(path.join(archiveRoot, 'sample.docx'));
 
-  const addFileMessage = (name) => {
-    const rec = storage.saveMessage({
-      channelId: 'c1',
-      channelName: '测试通道',
-      peer: 'peer1',
-      text: '',
-      kind: 'file',
-      category: '未分类',
-      sub: '',
-      filename: name,
-    });
-    storage.setMedia(rec.id, name);
-    return rec.id;
-  };
-  zipId = addFileMessage('sample.zip');
-  tgzId = addFileMessage('sample.tgz');
-  docxId = addFileMessage('sample.docx');
+  zipId = register('sample.zip');
+  tgzId = register('sample.tgz');
+  docxId = register('sample.docx');
 
   const app = express();
   app.use('/api/media', createMediaRouter({ storage }));
@@ -108,9 +109,7 @@ before(async () => {
 });
 
 after(() => {
-  // 先关服务再关库：确保没有在途请求，并让 prepared statement 在环境析构前释放
   if (server) server.close();
-  if (storage?.db) storage.db.close();
 });
 
 test('GET /api/media/list/:id 列出 zip 内文件', async () => {
@@ -171,17 +170,7 @@ test('GET /api/media/info/:id 返回文件名/大小/MIME/扩展名', async () =
 });
 
 test('路径穿越被拒绝（403）', async () => {
-  const evil = storage.saveMessage({
-    channelId: 'c1',
-    channelName: '测试通道',
-    peer: 'peer1',
-    text: '',
-    kind: 'file',
-    category: '未分类',
-    sub: '',
-    filename: '../evil.zip',
-  });
-  storage.setMedia(evil.id, '../evil.zip');
-  const res = await fetch(`${baseUrl}/api/media/list/${evil.id}`);
+  const evilId = register('../evil.zip');
+  const res = await fetch(`${baseUrl}/api/media/list/${evilId}`);
   assert.equal(res.status, 403);
 });
