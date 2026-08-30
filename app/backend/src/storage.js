@@ -38,6 +38,7 @@ export class Storage {
     fs.mkdirSync(dataDir, { recursive: true });
     fs.mkdirSync(archiveRoot, { recursive: true });
     this.db = new Database(path.join(dataDir, 'archive.db'));
+    this._stmts = new Map(); // 预编译语句缓存（见 _stmt）
     this.db.pragma('journal_mode = WAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (
@@ -119,6 +120,26 @@ export class Storage {
   // 保存一条消息：写 SQLite；真正的媒体文件由 saveMedia 按类型落盘到 图片/文件/视频/语音 目录，
   // 不再为每条消息生成 Markdown 卡片（用户需在飞牛文件管理器中直接预览原文件）。
   // 聊天类(纯文本/语音)引用该通道的 聊天.xlsx。
+  // 预编译语句缓存：按 SQL 文本复用 Statement。
+  //
+  // 为什么需要：此前每处都是 `this.db.prepare(sql).run(...)` —— 即用即弃。
+  // 这些临时 Statement 调用完就变成垃圾，一旦被 GC 析构，在 Node 24 上配合
+  // better-sqlite3 11.10 会命中原生断言 Assertion failed: (env) != nullptr
+  // （RemoveEnvironmentCleanupHook ← Statement::~Statement）直接中止进程。
+  // 缓存后语句常驻引用，不会被 GC 析构；顺带省掉每次重复解析 SQL 的开销
+  // （saveMessage / listMessages 是高频路径，收益明显）。
+  //
+  // 缓存规模是有界的：SQL 变体只由"用了哪些筛选条件"决定，
+  // 条件值一律用 ? 绑定、不拼进 SQL，因此组合数是有限的小规模集合。
+  _stmt(sql) {
+    let s = this._stmts.get(sql);
+    if (!s) {
+      s = this.db.prepare(sql); // 注意：这里必须是 db.prepare，不能递归回 _stmt
+      this._stmts.set(sql, s);
+    }
+    return s;
+  }
+
   saveMessage({ channelId, channelName, peer, text, kind = '', category = '未分类', sub = '', voice = '', media = '', filename = '' }) {
     const ts = Date.now();
     // 微信表情占位符（如 [裂开]）：若整条文本只是表情、且未被显式标记为媒体类型，
@@ -149,8 +170,7 @@ export class Storage {
       filename: filename || '',
       created_at: ts,
     };
-    const r = this.db
-      .prepare(
+    const r = this._stmt(
         'INSERT INTO messages (channel_id, channel_name, peer, ts, category, sub, text, kind, path, voice, media, filename, created_at) VALUES (@channel_id, @channel_name, @peer, @ts, @category, @sub, @text, @kind, @path, @voice, @media, @filename, @created_at)',
       )
       .run(info);
@@ -159,20 +179,20 @@ export class Storage {
 
   // 聊天类消息的语音音频相对路径（用于 Web 播放/下载），在音频落盘后回填
   setVoice(id, rel) {
-    this.db.prepare('UPDATE messages SET voice=? WHERE id=?').run(rel || '', id);
+    this._stmt('UPDATE messages SET voice=? WHERE id=?').run(rel || '', id);
   }
 
   // 媒体（图片/文件/视频/表情）相对路径回填，落盘后调用
   setMedia(id, rel) {
-    this.db.prepare('UPDATE messages SET media=? WHERE id=?').run(rel || '', id);
+    this._stmt('UPDATE messages SET media=? WHERE id=?').run(rel || '', id);
   }
 
   // 重新分类：媒体文件按类型固定落在 图片/文件/视频/语音 目录（由 kind 决定，不随语义分类移动），
   // 因此非聊天类只需更新 SQLite 的 category/sub 标签；聊天类同理只更新索引。
   reclassify(id, category, sub = '') {
-    const row = this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);
+    const row = this._stmt('SELECT * FROM messages WHERE id=?').get(id);
     if (!row) return null;
-    this.db.prepare('UPDATE messages SET category=?, sub=? WHERE id=?').run(category, sub, id);
+    this._stmt('UPDATE messages SET category=?, sub=? WHERE id=?').run(category, sub, id);
     return this.getMessage(id);
   }
 
@@ -194,7 +214,7 @@ export class Storage {
           stats.scanned += 1;
           // 在 DB 中找指向该旧路径的消息（rel 用正斜杠，与落盘一致）
           const rel = Storage._posix(ch, '媒体', fname);
-          const row = this.db.prepare('SELECT * FROM messages WHERE media=?').get(rel);
+          const row = this._stmt('SELECT * FROM messages WHERE media=?').get(rel);
           const kind = row?.kind || '';
           // 去重：若同通道已有内容相同的文件，直接复用
           let buf = null;
@@ -212,7 +232,7 @@ export class Storage {
             } catch {
               /* ignore */
             }
-            if (row) this.db.prepare('UPDATE messages SET media=? WHERE id=?').run(dup, row.id);
+            if (row) this._stmt('UPDATE messages SET media=? WHERE id=?').run(dup, row.id);
             stats.deduped += 1;
             continue;
           }
@@ -233,7 +253,7 @@ export class Storage {
           }
           const newRel = Storage._posix(ch, catDir, path.basename(newAbs));
           this._recordHash(hash, newRel, ch);
-          if (row) this.db.prepare('UPDATE messages SET media=? WHERE id=?').run(newRel, row.id);
+          if (row) this._stmt('UPDATE messages SET media=? WHERE id=?').run(newRel, row.id);
           stats.moved += 1;
         }
         // 清理空的 媒体/ 目录
@@ -280,7 +300,7 @@ export class Storage {
   }
 
   getMessage(id) {
-    const row = this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);
+    const row = this._stmt('SELECT * FROM messages WHERE id=?').get(id);
     return row ? this._map(row) : null;
   }
 
@@ -320,12 +340,11 @@ export class Storage {
   renameChannel({ channelId, oldName, newName }) {
     const oldSafe = Storage.safe(oldName);
     const newSafe = Storage.safe(newName);
-    this.db.prepare('UPDATE messages SET channel_name=? WHERE channel_id=?').run(newName, channelId);
+    this._stmt('UPDATE messages SET channel_name=? WHERE channel_id=?').run(newName, channelId);
     if (oldSafe === newSafe) return false;
     const like = oldSafe + '/';
     for (const col of ['path', 'media', 'voice']) {
-      this.db
-        .prepare(`UPDATE messages SET ${col} = REPLACE(${col}, ?, ?) WHERE channel_id=? AND ${col} LIKE ?`)
+      this._stmt(`UPDATE messages SET ${col} = REPLACE(${col}, ?, ?) WHERE channel_id=? AND ${col} LIKE ?`)
         .run(oldSafe + '/', newSafe + '/', channelId, like + '%');
     }
     try {
@@ -415,8 +434,7 @@ export class Storage {
 
   async _rebuildChat(channelName) {
     const file = this._chatFile(channelName);
-    const rows = this.db
-      .prepare("SELECT * FROM messages WHERE channel_name=? AND kind IN ('text','voice') ORDER BY ts ASC")
+    const rows = this._stmt("SELECT * FROM messages WHERE channel_name=? AND kind IN ('text','voice') ORDER BY ts ASC")
       .all(channelName);
     if (!rows.length) {
       // 该通道已无聊天记录：删掉空壳 xlsx，让侧栏归档列表同步消失
@@ -452,17 +470,16 @@ export class Storage {
   //   3) 聊天类消息：按剩余记录重写该通道 聊天.xlsx
   // 返回 { id, removedFiles, xlsxRebuilt }；id 不存在返回 null。
   async deleteMessage(id) {
-    const row = this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);
+    const row = this._stmt('SELECT * FROM messages WHERE id=?').get(id);
     if (!row) return null;
 
-    this.db.prepare('DELETE FROM messages WHERE id=?').run(id);
+    this._stmt('DELETE FROM messages WHERE id=?').run(id);
 
     let removedFiles = 0;
     const root = path.resolve(this.archiveRoot);
     for (const rel of [row.media, row.voice]) {
       if (!rel || /^https?:\/\//.test(String(rel))) continue; // 外链不删
-      const stillUsed = this.db
-        .prepare('SELECT COUNT(*) AS c FROM messages WHERE media=? OR voice=?')
+      const stillUsed = this._stmt('SELECT COUNT(*) AS c FROM messages WHERE media=? OR voice=?')
         .get(rel, rel).c;
       if (stillUsed > 0) continue; // 去重后被其他消息引用
       const abs = path.resolve(this.archiveRoot, rel);
@@ -476,7 +493,7 @@ export class Storage {
         console.error('[ClawVault] 删除归档文件失败:', e?.message || e);
       }
       try {
-        this.db.prepare('DELETE FROM media_hashes WHERE rel=?').run(rel);
+        this._stmt('DELETE FROM media_hashes WHERE rel=?').run(rel);
       } catch {
         /* 去重表清理失败不影响主流程 */
       }
@@ -547,8 +564,7 @@ export class Storage {
 
   // 去重：同通道内内容相同的文件只存一份。返回已存在文件的相对路径（无则空串）
   _findDup(channelName, hash) {
-    const row = this.db
-      .prepare('SELECT rel FROM media_hashes WHERE channel_name=? AND hash=?')
+    const row = this._stmt('SELECT rel FROM media_hashes WHERE channel_name=? AND hash=?')
       .get(channelName, hash);
     if (row && fs.existsSync(path.resolve(this.archiveRoot, row.rel))) return row.rel;
     return '';
@@ -556,8 +572,7 @@ export class Storage {
 
   _recordHash(hash, rel, channelName) {
     try {
-      this.db
-        .prepare('INSERT OR REPLACE INTO media_hashes (hash, rel, channel_name) VALUES (?,?,?)')
+      this._stmt('INSERT OR REPLACE INTO media_hashes (hash, rel, channel_name) VALUES (?,?,?)')
         .run(hash, rel, channelName);
     } catch {
       /* 去重表写入失败不影响主流程 */
@@ -645,11 +660,9 @@ export class Storage {
     for (const ch of fs.readdirSync(root)) {
       const xlsx = path.join(root, ch, '聊天.xlsx');
       if (!fs.existsSync(xlsx)) continue;
-      const r1 = this.db
-        .prepare("SELECT COUNT(*) AS c FROM messages WHERE channel_name=? AND kind IN ('text','voice')")
+      const r1 = this._stmt("SELECT COUNT(*) AS c FROM messages WHERE channel_name=? AND kind IN ('text','voice')")
         .get(ch);
-      const r2 = this.db
-        .prepare("SELECT COUNT(*) AS c FROM messages WHERE channel_name=? AND voice IS NOT NULL AND voice != ''")
+      const r2 = this._stmt("SELECT COUNT(*) AS c FROM messages WHERE channel_name=? AND voice IS NOT NULL AND voice != ''")
         .get(ch);
       let size = 0;
       try {
@@ -671,13 +684,12 @@ export class Storage {
   // 一次性把历史数据中「整条仅含微信表情占位符」的文本消息重新归类为表情类型。
   // 幂等：已为 emoji 的不重复处理；只扫描原本是 text/空 kind 的记录。返回受影响条数。
   reclassifyEmojis() {
-    const rows = this.db
-      .prepare("SELECT id, text FROM messages WHERE kind = '' OR kind = 'text'")
+    const rows = this._stmt("SELECT id, text FROM messages WHERE kind = '' OR kind = 'text'")
       .all();
     let n = 0;
     for (const r of rows) {
       if (isPureEmojiText(r.text)) {
-        this.db.prepare("UPDATE messages SET kind = 'emoji' WHERE id = ?").run(r.id);
+        this._stmt("UPDATE messages SET kind = 'emoji' WHERE id = ?").run(r.id);
         n += 1;
       }
     }
@@ -719,17 +731,15 @@ export class Storage {
       params.q = `%${escapeLike(q)}%`;
     }
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const rows = this.db
-      .prepare(`SELECT * FROM messages ${w} ORDER BY ts DESC LIMIT @limit OFFSET @offset`)
+    const rows = this._stmt(`SELECT * FROM messages ${w} ORDER BY ts DESC LIMIT @limit OFFSET @offset`)
       .all({ ...params, limit, offset });
-    const total = this.db.prepare(`SELECT COUNT(*) AS c FROM messages ${w}`).get(params).c;
+    const total = this._stmt(`SELECT COUNT(*) AS c FROM messages ${w}`).get(params).c;
     return { total, items: rows.map((r) => this._map(r)) };
   }
 
   // 分类文件夹树：按 通道 → 分类 → 子分类 聚合
   getFolders() {
-    const rows = this.db
-      .prepare(
+    const rows = this._stmt(
         'SELECT channel_name, category, sub, COUNT(*) AS cnt FROM messages GROUP BY channel_name, category, sub ORDER BY channel_name, category, sub',
       )
       .all();
@@ -756,25 +766,23 @@ export class Storage {
   }
 
   count() {
-    return this.db.prepare('SELECT COUNT(*) AS c FROM messages').get().c;
+    return this._stmt('SELECT COUNT(*) AS c FROM messages').get().c;
   }
 
   // 运行状况统计：总数、按类型分布、按分类分布、媒体缺口（应存媒体却未落盘）
   stats() {
     const total = this.count();
-    const byKindRows = this.db.prepare('SELECT kind, COUNT(*) AS c FROM messages GROUP BY kind').all();
+    const byKindRows = this._stmt('SELECT kind, COUNT(*) AS c FROM messages GROUP BY kind').all();
     const byKind = {};
     for (const r of byKindRows) byKind[r.kind || 'unknown'] = r.c;
-    const catRows = this.db
-      .prepare('SELECT category, COUNT(*) AS c FROM messages GROUP BY category ORDER BY c DESC')
+    const catRows = this._stmt('SELECT category, COUNT(*) AS c FROM messages GROUP BY category ORDER BY c DESC')
       .all();
     const byCategory = catRows.map((r) => ({ category: r.category, count: r.c }));
     // 这些类型应通过 saveMedia 落盘；若 media 为空即为"缺口"（照片缺失的根因信号）
     const mediaKinds = ['image', 'video', 'file', 'sticker', 'gif', 'picture', 'photo', 'short_video', 'document'];
-    const gaps = this.db
-      .prepare(`SELECT COUNT(*) AS c FROM messages WHERE kind IN (${mediaKinds.map(() => '?').join(',')}) AND (media IS NULL OR media = '')`)
+    const gaps = this._stmt(`SELECT COUNT(*) AS c FROM messages WHERE kind IN (${mediaKinds.map(() => '?').join(',')}) AND (media IS NULL OR media = '')`)
       .get(...mediaKinds).c;
-    const stored = this.db.prepare("SELECT COUNT(*) AS c FROM messages WHERE media IS NOT NULL AND media != ''").get().c;
+    const stored = this._stmt("SELECT COUNT(*) AS c FROM messages WHERE media IS NOT NULL AND media != ''").get().c;
     return { total, byKind, byCategory, mediaGaps: gaps, mediaStored: stored };
   }
 }

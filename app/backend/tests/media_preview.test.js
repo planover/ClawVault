@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 import tar from 'tar';
+import { Storage } from '../src/storage.js';
 import createMediaRouter from '../src/routes/media.js';
 
 // 文件预览相关路由的回归测试：
@@ -14,41 +15,21 @@ import createMediaRouter from '../src/routes/media.js';
 //   /api/media/preview/:id → Office 文档（docx）转 HTML
 //   /api/media/:id?inline=1 → 内联预览（PDF iframe 依赖 inline 处置）
 //
-// 这里用最小假 Storage 而不是真实 Storage，原因有二：
-//   1) 本测试只验证媒体路由（路径解析/MIME/处置/预览转换），与存储层无关，
-//      用假对象能让关注点更集中、跑得更快；
-//   2) 真实 Storage 会经 better-sqlite3 创建预编译语句，在 Node 24 下若语句被 GC
-//      析构会触发原生断言 Assertion failed: (env) != nullptr 直接中止进程（本机
-//      Node 22 不复现，CI 的 Node 24 会红）。媒体路由只用到 getMessage 与 archiveRoot，
-//      因此用假 Storage 能彻底规避该原生模块问题。
-//
-// 假的 storage 必须提供 media.js 里 resolveMedia 用到的两个成员。
+// 这里特意使用**真实 Storage**（而非假对象），因为它同时是一道重要的回归防线：
+// 在 storage.js 改为复用预编译语句之前，每次 `db.prepare(sql).run(...)` 都会产生
+// 即用即弃的 Statement，这些临时对象一旦被 GC 析构，Node 24 上配合
+// better-sqlite3 11.10 会命中原生断言 Assertion failed: (env) != nullptr
+// （RemoveEnvironmentCleanupHook ← Statement::~Statement）直接中止进程。
+// 本文件正是当年的触发点——docx→mammoth 转换的重活制造了 GC 压力。
+// 现在 storage 通过 _stmt() 缓存语句，Statement 常驻引用不会被 GC 析构，
+// 因此本测试在 Node 24 下必须保持通过；若有人改回即用即弃的 prepare，这里会红。
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-media-'));
 const archiveRoot = path.join(tmp, 'archive');
+const dataDir = path.join(tmp, 'data');
 fs.mkdirSync(archiveRoot, { recursive: true });
 
-const messages = new Map();
-const storage = {
-  archiveRoot,
-  getMessage(id) {
-    return messages.get(Number(id)) || null;
-  },
-};
-
-let nextId = 1;
-function register(name) {
-  const id = nextId++;
-  messages.set(id, { id, kind: 'file', filename: name, media: name });
-  return id;
-}
-
-function startServer(app) {
-  return new Promise((resolve) => {
-    const server = http.createServer(app);
-    server.listen(0, () => resolve(server));
-  });
-}
-
+let storage;
 let server;
 let baseUrl;
 let zipId;
@@ -56,6 +37,8 @@ let tgzId;
 let docxId;
 
 before(async () => {
+  storage = new Storage({ dataDir, archiveRoot });
+
   // 构造测试用 zip
   const zip = new AdmZip();
   zip.addFile('a.txt', Buffer.from('hello'));
@@ -98,18 +81,36 @@ before(async () => {
   );
   dz.writeZip(path.join(archiveRoot, 'sample.docx'));
 
-  zipId = register('sample.zip');
-  tgzId = register('sample.tgz');
-  docxId = register('sample.docx');
+  const addFileMessage = (name) => {
+    const rec = storage.saveMessage({
+      channelId: 'c1',
+      channelName: '测试通道',
+      peer: 'peer1',
+      text: '',
+      kind: 'file',
+      category: '未分类',
+      sub: '',
+      filename: name,
+    });
+    storage.setMedia(rec.id, name);
+    return rec.id;
+  };
+  zipId = addFileMessage('sample.zip');
+  tgzId = addFileMessage('sample.tgz');
+  docxId = addFileMessage('sample.docx');
 
   const app = express();
   app.use('/api/media', createMediaRouter({ storage }));
-  server = await startServer(app);
+  await new Promise((resolve) => {
+    server = http.createServer(app);
+    server.listen(0, resolve);
+  });
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
 after(() => {
   if (server) server.close();
+  if (storage?.db) storage.db.close();
 });
 
 test('GET /api/media/list/:id 列出 zip 内文件', async () => {
@@ -170,7 +171,17 @@ test('GET /api/media/info/:id 返回文件名/大小/MIME/扩展名', async () =
 });
 
 test('路径穿越被拒绝（403）', async () => {
-  const evilId = register('../evil.zip');
-  const res = await fetch(`${baseUrl}/api/media/list/${evilId}`);
+  const evil = storage.saveMessage({
+    channelId: 'c1',
+    channelName: '测试通道',
+    peer: 'peer1',
+    text: '',
+    kind: 'file',
+    category: '未分类',
+    sub: '',
+    filename: '../evil.zip',
+  });
+  storage.setMedia(evil.id, '../evil.zip');
+  const res = await fetch(`${baseUrl}/api/media/list/${evil.id}`);
   assert.equal(res.status, 403);
 });
