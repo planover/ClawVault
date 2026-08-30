@@ -8,15 +8,18 @@ import Icon from './Icon.vue';
 const props = defineProps({ show: Boolean, mode: String, themeStyle: String });
 const emit = defineEmits(['close', 'saved', 'set-mode', 'set-style']);
 
-// 外观：模式（跟随系统 / 浅色 / 深色）+ 风格（默认 / iOS），改动直接冒泡到 App 做持久化
+// 外观：模式（跟随系统 / 浅色 / 深色）+ 风格，改动直接冒泡到 App 做持久化
 const modeOptions = [
   { value: 'system', label: '跟随系统' },
   { value: 'light', label: '浅色' },
   { value: 'dark', label: '深色' },
 ];
+// 风格键值必须与主题 CSS 的 [data-theme-style='…'] 选择器一致：
+//   default → style.css 默认；ios-classic → theme-ios-classic.css；ios27 → theme-ios27.css
 const styleOptions = [
   { value: 'default', label: '默认' },
-  { value: 'ios', label: 'iOS' },
+  { value: 'ios-classic', label: 'iOS 经典' },
+  { value: 'ios27', label: 'iOS 27' },
 ];
 function onSetMode(v) {
   emit('set-mode', v);
@@ -170,7 +173,7 @@ async function testAI() {
             {{ o.label }}
           </button>
         </div>
-        <p class="field-hint">「iOS」为独立视觉风格，具备细腻光影、半透明层次与圆润控件质感，深浅色均支持。</p>
+        <p class="field-hint">「iOS 经典」为独立视觉风格，具备细腻光影、半透明层次与圆润控件质感；「iOS 27」为强玻璃质感风格，采用半透明毛玻璃背景、细腻高光边框、层次化景深与光折射效果。两套风格均完整适配浅色与深色。</p>
       </div>
 
       <!-- 归档 -->
@@ -194,6 +197,21 @@ async function testAI() {
         <input id="s-wl" class="input" v-model="settings.ingest.whitelistText" placeholder="留空 = 归档全部；多个用逗号分隔" />
         <p class="field-hint">填写后，只有来自这些会话对象的消息会被归档。</p>
       </div>
+
+      <label class="toggle-row">
+        <span>
+          <span class="toggle-label">消息接收回执</span>
+          <span class="field-hint">Bot 收到消息后自动向发送者回复归档回执（接收日期 + 总条数 + 各类型条数，数量为 0 的类型不显示）。同一会话短时间内的多条消息会合并为一封回执。</span>
+        </span>
+        <button
+          class="switch"
+          :class="{ on: settings.ingest.auto_reply_receipt }"
+          role="switch"
+          :aria-checked="settings.ingest.auto_reply_receipt"
+          aria-label="消息接收回执"
+          @click="settings.ingest.auto_reply_receipt = !settings.ingest.auto_reply_receipt"
+        ></button>
+      </label>
 
       <!-- AI -->
       <div class="section-label section-title">AI 自动分类</div>

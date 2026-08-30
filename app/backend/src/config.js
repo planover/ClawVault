@@ -31,7 +31,7 @@ const DEFAULTS = {
   ingest: {
     only_bot_contacts: true,
     whitelist: [],
-    auto_reply_receipt: false,
+    auto_reply_receipt: true,
   },
   demo_mode: false,
 };

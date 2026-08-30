@@ -14,6 +14,7 @@ export class ChannelManager {
     this.storePath = path.join(dataDir, 'channels.json');
     this._key = vault.loadKey(dataDir); // 主密钥：CLV_MASTER_KEY > data_dir/.clvkey
     this.channels = new Map();
+    this.credentialError = false; // 解密失败（密钥丢失/文件损坏）时置位，供前端提示重新绑定
     this._load();
   }
 
@@ -31,7 +32,18 @@ export class ChannelManager {
         list = parsed;
         this._persist(); // 首次读取为明文 → 立即重写为加密态
       } else {
-        list = vault.decryptJSON(raw, this._key); // 加密态
+        try {
+          list = vault.decryptJSON(raw, this._key); // 加密态
+        } catch (de) {
+          // 密钥丢失或文件损坏（如卸载重装清掉了 data-share 后残留旧文件）：
+          // 不能让启动直接崩溃，降级为"空通道 + 明确报错"，由前端引导用户重新绑定。
+          console.error(
+            '[ClawVault] 凭据解密失败（密钥丢失或文件损坏），以空通道列表启动：',
+            de?.message || de,
+          );
+          this.credentialError = true;
+          list = [];
+        }
       }
     } catch (e) {
       if (e && e.code === 'ENOENT') list = [];

@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { toast } from '../toast.js';
 import Icon from './Icon.vue';
 
-const props = defineProps({ show: Boolean, channels: Array });
+const props = defineProps({ show: Boolean, channels: Array, credentialError: Boolean });
 const emit = defineEmits(['close', 'changed']);
 
 const providers = ref([]);
@@ -160,6 +160,14 @@ function close() {
       <h3>通道管理</h3>
       <p class="modal-sub">接入一个或多个 Bot，消息会被自动归档到 NAS。</p>
 
+      <div v-if="credentialError" class="rebind-banner">
+        <Icon name="alert" :size="15" />
+        <div>
+          <strong>凭据无法自动恢复</strong>
+          <p>检测到已加密的登录凭据无法解密（多因卸载重装时清除了应用数据目录）。出于安全，ClawVault 不会以明文回退，请点击下方「扫码登录」或「连接」重新绑定通道即可恢复归档。</p>
+        </div>
+      </div>
+
       <!-- 新增通道 -->
       <div class="add-card">
         <div class="add-row">
@@ -243,6 +251,9 @@ function close() {
             <button class="btn sm ghost" @click="confirmId = null">取消</button>
           </template>
         </div>
+        <p v-if="ch.needRescan" class="rescan-hint">
+          登录态已失效。点击「重置」后重新扫码即可恢复；凭据已加密保存在本机，若已卸载重装导致数据丢失则需重新绑定。
+        </p>
       </div>
 
       <p v-if="!channels.length" class="muted small empty-ch">还没有通道，选择一种接入类型并添加。</p>
@@ -304,6 +315,33 @@ function close() {
 }
 .ch-header {
   margin-bottom: 8px;
+}
+.rebind-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--c-danger-border);
+  border-radius: var(--r-md);
+  background: var(--c-danger-bg);
+  color: var(--c-danger);
+}
+.rebind-banner p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-text-2);
+}
+.rebind-banner strong {
+  font-size: 13px;
+}
+.rescan-hint {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--c-warn);
 }
 .ch-row {
   display: flex;

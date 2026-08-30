@@ -19,6 +19,7 @@ import createVoiceRouter from './routes/voice.js';
 import createMediaRouter from './routes/media.js';
 import createHealthRouter from './routes/health.js';
 import createAboutRouter from './routes/about.js';
+import { ReceiptService } from './receipt.js';
 
 // ---- 设置持久化（覆盖默认配置） ----
 function loadSettings() {
@@ -68,6 +69,8 @@ try {
   console.error('[ClawVault] 旧媒体迁移失败（不影响运行）:', e?.message || e);
 }
 const ws = new WSBroadcaster();
+// 归档回执服务（收到消息后自动回复发送者，详见 receipt.js）
+const receipt = new ReceiptService();
 
 // 消息处理链：白名单过滤 → 存「待分类」→ 广播
 //   → 纯文本 / 语音 → 写入 [通道]/聊天.xlsx（语音：社交端转写或 AI 补转，并保存音频）
@@ -101,6 +104,9 @@ async function handleMessage(channel, msg) {
     }
   }
   ws.broadcast({ type: 'message', record });
+
+  // 归档回执：收到消息后，按会话对象聚合类型与数量，去抖后自动回复发送者
+  receipt.handle(channel, msg, config.ingest.auto_reply_receipt);
 
   // 纯文本 / 语音 → 聊天.xlsx
   if (Storage.isChat(msg.kind)) {

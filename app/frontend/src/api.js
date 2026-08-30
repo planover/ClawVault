@@ -48,7 +48,12 @@ async function getJson(url, opts = {}) {
 
 export const api = {
   providers: () => getJson('/api/providers'),
-  listChannels: () => getJson('/api/channels'),
+  listChannels: async () => {
+    const r = await getJson('/api/channels');
+    // 后端返回 { channels, credentialError }，统一在此解包
+    if (r && Array.isArray(r.channels)) return r;
+    return { channels: Array.isArray(r) ? r : [], credentialError: false };
+  },
   createChannel: (name, providerType, providerConfig) =>
     getJson('/api/channels', {
       method: 'POST',
@@ -80,11 +85,19 @@ export const api = {
   chats: () => getJson('/api/chats'),
   // 直接给 <audio src> / <img src> / <a download> 用，必须自带网关前缀
   voiceUrl: (id) => apiUrl(`/api/voice/${id}`),
-  mediaUrl: (id) => apiUrl(`/api/media/${id}`),
+  // inline=true 时带 ?inline=1，让后端用 Content-Disposition: inline（PDF 等可内嵌预览）；
+  // 不带则为 attachment（触发下载）。
+  mediaUrl: (id, opts = {}) => apiUrl(`/api/media/${id}${opts.inline ? '?inline=1' : ''}`),
+  // Office（docx/xlsx）转 HTML 后的内嵌预览地址
+  mediaPreviewUrl: (id) => apiUrl(`/api/media/preview/${id}`),
+  // 压缩包内文件列表（zip/tar/tgz）
+  mediaListUrl: (id) => apiUrl(`/api/media/list/${id}`),
   // 缩略图：后端按需缩放，列表/详情用更小的带宽（w 默认 320，详情可传更大）
   thumbUrl: (id, w = 320) => apiUrl(`/api/media/thumb/${id}?w=${w}`),
   // 媒体元信息：文件名 / 大小 / MIME / 扩展名，供「文件预览」展示
   mediaInfo: (id) => getJson(`/api/media/info/${id}`),
+  // 压缩包内文件列表
+  mediaList: (id) => getJson(`/api/media/list/${id}`),
   about: () => getJson('/api/about'),
   getSettings: () => getJson('/api/settings'),
   saveSettings: (body) =>

@@ -3,7 +3,9 @@ import { Router } from 'express';
 export default function createChannelsRouter({ manager, storage }) {
   const r = Router();
 
-  r.get('/', (req, res) => res.json(manager.listChannels()));
+  r.get('/', (req, res) =>
+    res.json({ channels: manager.listChannels(), credentialError: !!manager.credentialError }),
+  );
 
   r.post('/', async (req, res) => {
     const name = (req.body?.name || '').trim() || `通道${manager.listChannels().length + 1}`;
@@ -16,12 +18,12 @@ export default function createChannelsRouter({ manager, storage }) {
     } catch {
       /* 连接失败不影响创建，前端可稍后重试 */
     }
-    res.json(manager.listChannels());
+    res.json({ channels: manager.listChannels(), credentialError: !!manager.credentialError });
   });
 
   r.delete('/:id', (req, res) => {
     manager.removeChannel(req.params.id);
-    res.json(manager.listChannels());
+    res.json({ channels: manager.listChannels(), credentialError: !!manager.credentialError });
   });
 
   // 重命名通道（显示名）：同步更新归档文件夹与 DB 中的历史记录
@@ -34,7 +36,7 @@ export default function createChannelsRouter({ manager, storage }) {
       const oldName = ch.name;
       storage.renameChannel({ channelId: req.params.id, oldName, newName: name });
       manager.renameChannel(req.params.id, name);
-      res.json(manager.listChannels());
+      res.json({ channels: manager.listChannels(), credentialError: !!manager.credentialError });
     } catch (e) {
       res.status(400).json({ error: e.message });
     }

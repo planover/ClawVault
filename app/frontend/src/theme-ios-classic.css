@@ -1,14 +1,18 @@
 /* =========================================================================
-   ClawVault · iOS 主题（独立视觉风格）
-   - 通过 [data-theme-style='ios'] 启用，仅覆盖语义变量，不改动组件结构
+   ClawVault · iOS 经典主题（独立视觉风格）
+   - 通过 [data-theme-style='ios-classic'] 启用，仅覆盖语义变量，不改动组件结构
    - 浅色：iOS systemBlue 强调色 + 分组灰底（systemGroupedBackground），轻分隔线
    - 深色：纯黑底 + 高饱和强调色，保留 iOS 暗色质感
    - 光影：更柔更大、过渡更轻的阴影；圆角整体加大，控件更圆润
    - 层次：顶栏 / 侧栏 / 详情做毛玻璃半透明，叠出纵深
+
+   命名沿革：该主题原以 data-theme-style='ios' 注册，为重命名为「iOS 经典」
+   并与新增的「iOS 27」区分，键值统一改为 'ios-classic'；所有引用点
+   （App.vue 的 STYLE_KEY 取值校验、SettingsDialog 风格选项）同步更新。
    ========================================================================= */
 
-/* ---------------- iOS 浅色 ---------------- */
-[data-theme-style='ios'] {
+/* ---------------- iOS 经典 · 浅色 ---------------- */
+[data-theme-style='ios-classic'] {
   --c-primary: #007aff;
   --c-primary-hover: #0a84ff;
   --c-primary-active: #0062cc;
@@ -56,8 +60,8 @@
   --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.16), 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
-/* ---------------- iOS 深色 ---------------- */
-[data-theme-style='ios'][data-theme='dark'] {
+/* ---------------- iOS 经典 · 深色 ---------------- */
+[data-theme-style='ios-classic'][data-theme='dark'] {
   --c-primary: #0a84ff;
   --c-primary-hover: #409cff;
   --c-primary-active: #5ac8fa;
@@ -98,41 +102,41 @@
 
 /* ---------------- 半透明层次（毛玻璃） ----------------
    仅增强既有结构：用更高特异度（.app 前缀）覆盖组件 scoped 样式，
-   不改变任何 DOM，关闭 iOS 风格时自动回退到默认变量值。 */
+   不改变任何 DOM，关闭 iOS 经典风格时自动回退到默认变量值。 */
 
 /* 顶栏：毛玻璃、轻投影 */
-[data-theme-style='ios'] .app .topbar {
+[data-theme-style='ios-classic'] .app .topbar {
   background: color-mix(in srgb, var(--c-surface) 72%, transparent);
   backdrop-filter: saturate(180%) blur(22px);
   -webkit-backdrop-filter: saturate(180%) blur(22px);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.05);
 }
-[data-theme-style='ios'][data-theme='dark'] .app .topbar {
+[data-theme-style='ios-classic'][data-theme='dark'] .app .topbar {
   background: color-mix(in srgb, var(--c-surface) 70%, transparent);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05), 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 /* 侧栏：半透明叠出纵深 */
-[data-theme-style='ios'] .app .sidebar {
+[data-theme-style='ios-classic'] .app .sidebar {
   background: color-mix(in srgb, var(--c-surface-2) 86%, transparent);
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
 }
-[data-theme-style='ios'][data-theme='dark'] .app .sidebar {
+[data-theme-style='ios-classic'][data-theme='dark'] .app .sidebar {
   background: color-mix(in srgb, var(--c-surface-2) 80%, transparent);
 }
 
 /* 详情面板：半透明 */
-[data-theme-style='ios'] .app .detail {
+[data-theme-style='ios-classic'] .app .detail {
   background: color-mix(in srgb, var(--c-surface) 90%, transparent);
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
 }
-[data-theme-style='ios'][data-theme='dark'] .app .detail {
+[data-theme-style='ios-classic'][data-theme='dark'] .app .detail {
   background: color-mix(in srgb, var(--c-surface) 82%, transparent);
 }
 
 /* 列表卡片：iOS 卡片式悬浮感 */
-[data-theme-style='ios'] .app .skeleton-card {
+[data-theme-style='ios-classic'] .app .skeleton-card {
   border-radius: var(--r-lg);
 }

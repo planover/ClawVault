@@ -15,6 +15,7 @@ import AboutDialog from './components/AboutDialog.vue';
 import ToastHost from './components/ToastHost.vue';
 
 const channels = ref([]);
+const credError = ref(false); // 凭据无法解密恢复（如卸载重装清掉 data-share），需提示重新绑定
 const folders = ref([]);
 const chats = ref([]);
 const messages = ref([]);
@@ -29,9 +30,12 @@ const detailImgFailed = ref(false);
 const newCat = ref('');
 const newSub = ref('');
 
-// ---- 主题：模式（跟随系统 / 浅色 / 深色）+ 风格（默认 / iOS），均持久化 ----
+// ---- 主题：模式（跟随系统 / 浅色 / 深色）+ 风格，均持久化 ----
+// 风格：default（默认）/ ios-classic（iOS 经典）/ ios27（iOS 27 强玻璃质感），
+// 分别对应 theme-ios-classic.css / theme-ios27.css 的 [data-theme-style='…'] 选择器。
 const THEME_KEY = 'clawvault-mode'; // system | light | dark
-const STYLE_KEY = 'clawvault-style'; // default | ios
+const STYLE_KEY = 'clawvault-style'; // default | ios-classic | ios27
+const STYLES = ['default', 'ios-classic', 'ios27'];
 const theme = ref('light'); // 实际生效的 light/dark（由 mode 推导）
 const mode = ref('system');
 const themeStyle = ref('default');
@@ -70,11 +74,13 @@ if (mq) mq.addEventListener('change', () => {
 });
 
 // 初始化：localStorage 优先，缺省跟随系统 + 默认风格
+// 兼容：旧版本曾把 iOS 风格存为 'ios'，现重命名为 'ios-classic'，读到旧值自动迁移。
 try {
   const m = localStorage.getItem(THEME_KEY);
   if (m === 'light' || m === 'dark' || m === 'system') mode.value = m;
   const s = localStorage.getItem(STYLE_KEY);
-  if (s === 'ios' || s === 'default') themeStyle.value = s;
+  if (s === 'ios') themeStyle.value = 'ios-classic';
+  else if (STYLES.includes(s)) themeStyle.value = s;
 } catch {
   /* ignore */
 }
@@ -312,7 +318,9 @@ function onWSEvent(e) {
 
 async function loadChannels() {
   try {
-    channels.value = await api.listChannels();
+    const r = await api.listChannels();
+    channels.value = r.channels || [];
+    credError.value = !!r.credentialError;
   } catch (e) {
     toast.error('通道加载失败：' + (e.message || e));
   }
@@ -394,7 +402,7 @@ watch(selectedMessage, (v) => {
 
       <button class="btn ghost sm" @click="showChannels = true">
         <Icon name="plug" :size="14" />
-        通道
+        <span class="btn-label">通道</span>
         <span class="badge">{{ channels.length }}</span>
       </button>
       <button class="icon-btn" :aria-label="theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'" :title="theme === 'dark' ? '浅色模式' : '深色模式'" @click="toggleTheme">
@@ -403,7 +411,7 @@ watch(selectedMessage, (v) => {
       <button class="icon-btn" aria-label="设置" title="设置" @click="showSettings = true">
         <Icon name="settings" :size="18" />
       </button>
-      <button class="icon-btn" aria-label="关于" title="关于" @click="showAbout = true">
+      <button class="icon-btn about-btn" aria-label="关于" title="关于" @click="showAbout = true">
         <Icon name="info" :size="18" />
       </button>
     </header>
@@ -577,7 +585,7 @@ watch(selectedMessage, (v) => {
       </section>
     </div>
 
-    <ChannelDialog :show="showChannels" :channels="channels" @close="showChannels = false" @changed="onChannelsChanged" />
+    <ChannelDialog :show="showChannels" :channels="channels" :credential-error="credError" @close="showChannels = false" @changed="onChannelsChanged" />
     <SettingsDialog
       :show="showSettings"
       :mode="mode"
@@ -1037,9 +1045,21 @@ watch(selectedMessage, (v) => {
   line-height: 1.6;
 }
 
-/* ---------- 响应式 ---------- */
+/* ---------- 响应式 ----------
+   断点划分：≥1600 宽屏（大尺寸 PC / Mac 外接屏）
+             1240 / 1024 桌面与笔记本（侧栏 + 列表 + 详情三栏同屏）
+             ≤860  平板竖屏 / 小窗口（侧栏与详情转为抽屉覆盖层）
+             ≤560  手机（压缩顶栏，隐藏非关键元素）
+             触摸设备统一放大点按目标，保证触控与鼠标均无异常 */
 .side-mask {
   display: none;
+}
+
+/* 宽屏：详情面板给足空间，避免长文本被压窄 */
+@media (min-width: 1600px) {
+  .detail {
+    width: 420px;
+  }
 }
 
 @media (max-width: 1240px) {
@@ -1048,6 +1068,7 @@ watch(selectedMessage, (v) => {
   }
 }
 
+/* 笔记本 / 平板横屏：收紧侧栏与详情，"重新分类"表单改为单列避免挤在一起 */
 @media (max-width: 1024px) {
   .sidebar {
     width: 224px;
@@ -1058,8 +1079,12 @@ watch(selectedMessage, (v) => {
   .brand-name {
     display: none;
   }
+  .reclass-row {
+    grid-template-columns: 1fr;
+  }
 }
 
+/* 平板竖屏 / 小窗口：侧栏与详情改为抽屉覆盖层，不再与列表争宽度 */
 @media (max-width: 860px) {
   .hamburger {
     display: inline-flex;
@@ -1070,8 +1095,7 @@ watch(selectedMessage, (v) => {
     top: var(--topbar-h);
     bottom: 0;
     z-index: 60;
-    width: 80vw;
-    max-width: 300px;
+    width: min(80vw, 300px);
     transform: translateX(-100%);
     transition: transform var(--t);
     box-shadow: var(--shadow-lg);
@@ -1107,8 +1131,26 @@ watch(selectedMessage, (v) => {
   .search {
     max-width: none;
   }
+  /* 列表头部：类型筛选与条数换行，避免两者在同一行互相挤压导致溢出 */
+  .list-head-bottom {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .segmented {
+    flex: 1 1 auto;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+  .list-count {
+    margin-left: 0;
+  }
+  /* 详情此时是全宽覆盖层，重新分类恢复双列更省纵向空间 */
+  .reclass-row {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
+/* 手机：压缩顶栏与内边距，隐藏非关键元素，保证不溢出、不重叠 */
 @media (max-width: 560px) {
   .topbar {
     padding: 0 8px;
@@ -1122,6 +1164,20 @@ watch(selectedMessage, (v) => {
   }
   .list-wrap {
     padding: 8px;
+  }
+  /* 只留图标，隐藏按钮文字，给搜索框让出空间 */
+  .btn-label {
+    display: none;
+  }
+  .detail {
+    padding: 14px;
+  }
+}
+
+/* 超小屏手机：再省掉「关于」入口 */
+@media (max-width: 400px) {
+  .topbar .about-btn {
+    display: none;
   }
 }
 </style>

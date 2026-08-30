@@ -559,3 +559,70 @@ mark {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- 响应式：弹层与触控 ----------
+   手机 / 平板 / PC / Mac 下都要保证元素不溢出、不重叠，触控与鼠标均可用。 */
+
+/* 小屏：弹层贴边、限高、内边距收紧，避免被视口裁切 */
+@media (max-width: 560px) {
+  .modal-mask {
+    padding: 10px;
+    align-items: flex-start;
+  }
+  .modal {
+    width: 100%;
+    max-height: 94dvh;
+    padding: 18px;
+    border-radius: var(--r-lg);
+  }
+  /* 允许分组控件在窄屏换行，不横向溢出 */
+  .seg-group {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .seg-group .seg {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+  .modal-actions {
+    flex-wrap: wrap;
+  }
+  .modal-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* 平板竖屏：弹层稍微收窄限高，避免与虚拟键盘抢空间 */
+@media (min-width: 561px) and (max-width: 1024px) {
+  .modal {
+    max-height: 90dvh;
+  }
+}
+
+/* 触控设备：放大点按目标（不小于 40px），保证手指点击准确、不与相邻元素重叠 */
+@media (pointer: coarse) {
+  .icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .icon-btn.sm,
+  .btn.sm {
+    min-height: 36px;
+  }
+  .switch {
+    width: 44px;
+    height: 26px;
+  }
+  .switch::after {
+    width: 22px;
+    height: 22px;
+  }
+  .switch.on::after {
+    transform: translateX(18px);
+  }
+  /* 触控下输入框字号 ≥16px，避免 iOS Safari 聚焦时自动放大页面 */
+  .input,
+  select.input {
+    font-size: 16px;
+  }
+}

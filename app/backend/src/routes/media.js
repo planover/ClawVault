@@ -24,7 +24,20 @@ const MIME = {
   pdf: 'application/pdf',
   txt: 'text/plain',
   json: 'application/json',
+  csv: 'text/csv',
+  md: 'text/markdown',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   zip: 'application/zip',
+  rar: 'application/vnd.rar',
+  '7z': 'application/x-7z-compressed',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  tgz: 'application/gzip',
 };
 
 // 媒体文件服务：按消息 id 取落盘的图片/文件/视频，支持 Range 以便大文件/视频拖动。
@@ -33,6 +46,58 @@ function contentDisposition(filename) {
   const plain = String(filename).replace(/["\\]/g, '');
   const encoded = encodeURIComponent(plain).replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return `attachment; filename="${plain}"; filename*=UTF-8''${encoded}`;
+}
+
+// 把 Office 渲染出的 HTML 包成独立、自带排版的文档（iframe 是隔离文档，
+// 不继承应用 CSS 变量，这里内联一套中性、可读性好的样式）。
+function wrapOfficeHtml(bodyHtml, title) {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title || '预览'}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 24px; background: #fff; color: #1c1c1e;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: 14px; line-height: 1.7; }
+  @media (prefers-color-scheme: dark) { body { background: #1c1c1e; color: #f2f2f7; } }
+  img { max-width: 100%; height: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
+  th, td { border: 1px solid #d8dce4; padding: 6px 10px; text-align: left; vertical-align: top; }
+  @media (prefers-color-scheme: dark) { th, td { border-color: #343a45; } }
+  th { background: #f2f4f7; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { th { background: #191d24; } }
+  h1,h2,h3 { line-height: 1.4; }
+  pre { white-space: pre-wrap; word-break: break-word; }
+  .sheet { margin-bottom: 28px; }
+  .sheet-title { font-size: 13px; font-weight: 600; color: #6b6b70; margin: 0 0 8px; }
+</style></head><body>${bodyHtml}</body></html>`;
+}
+
+// Excel 工作簿 → 多张表格的 HTML（每张表带标题与表头）
+function renderXlsx(wb) {
+  const esc = (v) =>
+    String(v ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  let out = '';
+  for (const ws of wb.worksheets) {
+    out += `<section class="sheet"><div class="sheet-title">${esc(ws.name)}</div>`;
+    out += '<table>';
+    let header = true;
+    ws.eachRow((row) => {
+      out += '<tr>';
+      row.eachCell((cell) => {
+        const tag = header ? 'th' : 'td';
+        const val = cell.value && typeof cell.value === 'object' && 'text' in cell.value ? cell.value.text : cell.value;
+        out += `<${tag}>${esc(val)}</${tag}>`;
+      });
+      out += '</tr>';
+      header = false;
+    });
+    out += '</table></section>';
+  }
+  return out;
 }
 
 export default function createMediaRouter({ storage }) {
@@ -62,6 +127,12 @@ export default function createMediaRouter({ storage }) {
   function serveOriginal(req, res, m, abs) {
     const stat = fs.statSync(abs);
     const type = MIME[path.extname(abs).slice(1).toLowerCase()] || 'application/octet-stream';
+    // 预览请求（?inline=1）用 inline 处置，让浏览器内嵌渲染（尤其 PDF 的 iframe）；
+    // 否则用 attachment 触发下载。两者都带文件名，保证"另存为"拿到原名。
+    const disposition = req.query.inline ? 'inline' : 'attachment';
+    const setDisposition = () => {
+      if (m.filename) res.set('Content-Disposition', `${disposition}; ${contentDisposition(m.filename).replace(/^attachment;\s*/, '')}`);
+    };
     const range = req.headers.range;
 
     if (range) {
@@ -79,14 +150,14 @@ export default function createMediaRouter({ storage }) {
       res.set('Accept-Ranges', 'bytes');
       res.set('Content-Range', `bytes ${start}-${end}/${stat.size}`);
       res.set('Content-Length', end - start + 1);
-      if (m.kind === 'file' && m.filename) res.set('Content-Disposition', contentDisposition(m.filename));
+      setDisposition();
       return fs.createReadStream(abs, { start, end }).pipe(res);
     }
 
     res.set('Content-Type', type);
     res.set('Accept-Ranges', 'bytes');
     res.set('Content-Length', stat.size);
-    if (m.kind === 'file' && m.filename) res.set('Content-Disposition', contentDisposition(m.filename));
+    setDisposition();
     fs.createReadStream(abs).pipe(res);
   }
 
@@ -149,6 +220,74 @@ export default function createMediaRouter({ storage }) {
       return res.end(buf);
     } catch {
       return serveOriginal(req, res, m, abs);
+    }
+  });
+
+  // 在线预览：Office 文档（docx / xlsx）转 HTML，供前端 iframe 内嵌渲染。
+  // 纯文本/图片/音视频/PDF 由前端直接消费原始媒体，无需此路由。
+  // 解析/渲染失败一律回退 404，让前端走"下载 / 外部打开"。
+  r.get('/preview/:id', async (req, res) => {
+    const hit = resolveMedia(req.params.id);
+    if (hit && hit.traversal) return res.status(403).json({ error: 'forbidden' });
+    if (!hit) return res.status(404).json({ error: 'not found' });
+    const { m, abs } = hit;
+    const ext = path.extname(abs).slice(1).toLowerCase();
+    try {
+      let html = '';
+      if (ext === 'docx') {
+        const mammoth = (await import('mammoth')).default;
+        const result = await mammoth.convertToHtml({ path: abs });
+        html = wrapOfficeHtml(result.value, m.filename || '文档');
+      } else if (ext === 'xlsx') {
+        const ExcelJS = (await import('exceljs')).default;
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.readFile(abs);
+        html = wrapOfficeHtml(renderXlsx(wb), m.filename || '表格');
+      } else {
+        return res.status(415).json({ error: 'unsupported' });
+      }
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.send(html);
+    } catch (e) {
+      console.error('[media] 预览生成失败:', e?.message || e);
+      return res.status(404).json({ error: 'preview failed' });
+    }
+  });
+
+  // 压缩包内文件列表（zip / tar / tgz），满足"至少展示压缩包内文件列表"。
+  // rar / 7z 需系统原生工具，环境内不可用，回退 415 让前端提示下载。
+  r.get('/list/:id', async (req, res) => {
+    const hit = resolveMedia(req.params.id);
+    if (hit && hit.traversal) return res.status(403).json({ error: 'forbidden' });
+    if (!hit) return res.status(404).json({ error: 'not found' });
+    const { m, abs } = hit;
+    const ext = path.extname(abs).slice(1).toLowerCase();
+    try {
+      let entries = [];
+      if (ext === 'zip') {
+        const AdmZip = (await import('adm-zip')).default;
+        const zip = new AdmZip(abs);
+        entries = zip.getEntries().map((e) => ({
+          name: e.entryName,
+          size: e.isDirectory ? 0 : e.header.size,
+          dir: e.isDirectory,
+        }));
+      } else if (ext === 'tar' || ext === 'tgz' || ext === 'gz') {
+        const tar = await import('tar');
+        const collected = [];
+        await tar.list({
+          file: abs,
+          onentry: (entry) => collected.push({ name: entry.path, size: entry.size || 0, dir: entry.type === 'Directory' }),
+        });
+        entries = collected;
+      } else {
+        return res.status(415).json({ error: 'unsupported' });
+      }
+      return res.json({ entries, filename: m.filename || path.basename(abs) });
+    } catch (e) {
+      console.error('[media] 压缩包列表失败:', e?.message || e);
+      return res.status(404).json({ error: 'list failed' });
     }
   });
 
