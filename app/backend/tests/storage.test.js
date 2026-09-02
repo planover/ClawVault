@@ -126,6 +126,12 @@ test('listChatArchives：能列出通道的 聊天.xlsx 与统计', ser, async (
   assert.ok(f.rows >= 1);
   assert.equal(f.hasVoice, true);
   assert.ok(f.downloadUrl.endsWith('/xlsx'));
+  // 契约：后端只返回干净的接口路径（以 /api/ 开头、不含网关前缀），
+  // 前缀一律由前端 apiUrl() 统一拼接。v1.0.31 及之前前端直接把 downloadUrl
+  // 塞进 <a href>，在飞牛网关下被解析成站点根的 /api/...，打到了飞牛自己的兜底页，
+  // 表现为「点了下载没反应 / 下来一个 html」。这里钉死后端侧的契约，防止再次漏拼。
+  assert.ok(f.downloadUrl.startsWith('/api/'), `downloadUrl 应是 /api/ 开头的干净路径，实际：${f.downloadUrl}`);
+  assert.equal(f.downloadUrl, `/api/chats/${encodeURIComponent('通道F')}/xlsx`);
 });
 
 test('appendChatRow 并发写入同一通道不丢行（串行队列）', ser, async () => {

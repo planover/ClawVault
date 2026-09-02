@@ -32,6 +32,11 @@ const DEFAULTS = {
     only_bot_contacts: true,
     whitelist: [],
     auto_reply_receipt: true,
+    // 归档回执的"空闲窗口"：会话静默这么久之后，才发一封汇总回执。
+    // 回执口径是「当天累计」，窗口只决定多久发一次、以及一次合并多少条。
+    // 人的正常打字间隔通常在 10~30 秒，原默认 3.5s 太短，
+    // 导致几乎每条消息各发一封、且每封都只报 1 条。
+    receipt_idle_ms: 45000,
   },
   demo_mode: false,
 };

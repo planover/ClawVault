@@ -10,7 +10,12 @@ const BASE = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '');
 // 导出给组件拼接静态资源用
 export const basePath = BASE;
 
-function apiUrl(p) {
+// 把后端返回的 /api/... 路径补全为带网关前缀的可访问地址。
+// 后端只管返回干净的接口路径（不知道自己被挂在哪个前缀下），
+// 前缀一律由这里统一拼接——避免各处各拼一遍、漏拼就成了"点了没反应"。
+// 典型场景：聊天归档 Excel 的 downloadUrl 走 <a href>，不会经过 fetch，
+// 因此必须显式补前缀，否则浏览器会把它解析到站点根，打飞牛自己的网关兜底页。
+export function apiUrl(p) {
   return BASE + p;
 }
 

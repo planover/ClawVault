@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
-import { api, connectWS } from './api.js';
+import { api, connectWS, apiUrl } from './api.js';
 import { setWindowTitle } from './fnos.js';
 import { toast } from './toast.js';
 import Icon from './components/Icon.vue';
@@ -470,7 +470,7 @@ watch(selectedMessage, (v) => {
               <Icon class="chat-ico" name="sheet" :size="15" />
               <span class="truncate chat-name">{{ c.channel }}</span>
               <span class="nav-count">{{ c.rows }}</span>
-              <a class="icon-btn sm" :href="c.downloadUrl" :download="`${c.channel}-聊天.xlsx`" :title="`下载 ${c.channel} 聊天.xlsx`">
+              <a class="icon-btn sm" :href="apiUrl(c.downloadUrl)" :download="`${c.channel}-聊天.xlsx`" :title="`下载 ${c.channel} 聊天.xlsx`">
                 <Icon name="download" :size="15" />
               </a>
             </div>

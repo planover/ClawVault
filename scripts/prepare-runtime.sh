@@ -77,6 +77,30 @@ is_gzip() {
   [ "$head" = "1f8b" ]
 }
 
+# ---- 内置二进制完整性校验（供应链加固 P1-06）----
+# 计算文件 sha256（Linux/macOS/Git Bash 通用；缺失 sha256sum 时回退 openssl）
+sha256_of() {
+  local f="$1"
+  sha256sum "$f" 2>/dev/null | awk '{print $1}' \
+    || openssl dgst -sha256 "$f" 2>/dev/null | awk '{print $NF}'
+}
+# 比对 sha256；匹配返回 0
+verify_sha256() {
+  local f="$1" exp="$2"
+  [ -s "$f" ] || return 1
+  [ "$(sha256_of "$f")" = "$exp" ]
+}
+
+# 内置二进制预期 SHA256。由维护者填入官方/可信哈希后启用强校验；
+# 留空则仅做 ELF/gzip 头校验，并在日志告警（TOFU，非强校验）。
+# 维护者获取方式：
+#   node   → https://nodejs.org/dist/v${NODE_VER}/SHASUMS256.txt 中 node-v${NODE_VER}-linux-x64.tar.gz 一行
+#   bsql   → 下载对应 better-sqlite3 预编译包后 sha256sum 计算
+#   ffmpeg → 下载对应 ffmpeg-static 后 sha256sum 计算
+NODE_SHA256=""
+BSQL_SHA256=""
+FFMPEG_SHA256=""
+
 # 取文件：优先本地 .dl/，否则从 URL 列表依次下载。
 # 用法： fetch [--elf] <out> <url1> [<url2> ...]
 #   --elf  下载后校验文件头为 Linux ELF（用于最终可执行文件）
@@ -143,6 +167,18 @@ else
       "https://mirrors.huaweicloud.com/nodejs/v$NODE_VER/node-v$NODE_VER-linux-x64.tar.gz" \
       "https://gh-proxy.com/https://github.com/nodejs/node/releases/download/v$NODE_VER/node-v$NODE_VER-linux-x64.tar.gz" \
       "https://nodejs.org/dist/v$NODE_VER/node-v$NODE_VER-linux-x64.tar.gz"; then
+    # 完整性校验：优先官方 SHASUMS256.txt（真实强校验），否则比对维护者配置的 NODE_SHA256
+    if [ -n "$NODE_SHA256" ]; then
+      verify_sha256 "$TMP/node.tar.gz" "$NODE_SHA256" || { echo "✗ Node 校验和不匹配（可能已被篡改）" >&2; exit 1; }
+    elif curl -fsSL --connect-timeout 15 --max-time 60 "https://nodejs.org/dist/v$NODE_VER/SHASUMS256.txt" -o "$TMP/SHASUMS256.txt" 2>/dev/null; then
+      _want="$(grep " node-v$NODE_VER-linux-x64.tar.gz\$" "$TMP/SHASUMS256.txt" | awk '{print $1}')"
+      _got="$(sha256_of "$TMP/node.tar.gz")"
+      if [ -n "$_want" ] && [ "$_want" != "$_got" ]; then
+        echo "✗ Node 官方校验和不匹配（可能已被篡改）" >&2; exit 1
+      fi
+    else
+      echo "    ! 无法获取 Node 官方校验和，降级为仅 ELF 校验（建议补全 NODE_SHA256）" >&2
+    fi
     # Windows Git Bash 无法创建 symlink：排除 bin/npm|npx|corepack（运行时不需要，应用直接用 node 启动）
     # 解压到 $NODE_DIR（app/runtime/node），与 cmd/main 启动路径一致；--strip-components=1 去掉顶层 node-v*/ 前缀
     rm -rf "$NODE_DIR"
@@ -180,6 +216,12 @@ else
       "https://cdn.npmmirror.com/binaries/better-sqlite3/v$BSQL_VER/$BSQL_TAR" \
       "https://gh-proxy.com/$BSQL_URL" \
       "$BSQL_URL"; then
+    # 完整性校验：若维护者配置了 BSQL_SHA256 则强校验
+    if [ -n "$BSQL_SHA256" ]; then
+      verify_sha256 "$TMP/bsql.tar.gz" "$BSQL_SHA256" || { echo "✗ better-sqlite3 校验和不匹配（可能已被篡改）" >&2; exit 1; }
+    else
+      echo "    ! 未配置 BSQL_SHA256，仅做 gzip/ELF 校验（建议补全以启用强校验）" >&2
+    fi
     # 中间 tar.gz 额外校验 gzip 头，避免拿到 HTML
     if ! is_gzip "$TMP/bsql.tar.gz"; then
       echo "✗ better-sqlite3 下载包不是 gzip（可能是 HTML 错误页）" >&2
@@ -235,6 +277,11 @@ else
       "https://cdn.npmmirror.com/binaries/ffmpeg-static/b$FFMPEG_VER/ffmpeg-linux-x64" \
       "https://gh-proxy.com/$FFMPEG_URL" \
       "$FFMPEG_URL"; then
+    if [ -n "$FFMPEG_SHA256" ]; then
+      verify_sha256 "$TMP/ffmpeg" "$FFMPEG_SHA256" || { echo "✗ ffmpeg 校验和不匹配（可能已被篡改）" >&2; rm -f "$TMP/ffmpeg"; exit 1; }
+    else
+      echo "    ! 未配置 FFMPEG_SHA256，仅做 ELF 校验（建议补全以启用强校验）" >&2
+    fi
     mv "$TMP/ffmpeg" "$BIN_DIR/ffmpeg"
     chmod +x "$BIN_DIR/ffmpeg" 2>/dev/null || true
     is_elf "$BIN_DIR/ffmpeg" || { echo "✗ ffmpeg 不是 Linux ELF" >&2; rm -f "$BIN_DIR/ffmpeg"; exit 1; }

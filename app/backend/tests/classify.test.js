@@ -1,10 +1,49 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import config from '../src/config.js';
-import { platformKindToCategory, resolveClassification, classifyText, getRecentAiFailures } from '../src/classify.js';
+import { platformKindToCategory, resolveClassification, classifyText, textClassification, TEXT_CATEGORY, getRecentAiFailures } from '../src/classify.js';
 
 // 确保默认开启「优先平台类型」
 config.classification.usePlatformType = true;
+
+// 文本消息归类规则（用户约定）：
+//   - 默认（未配置 AI）落「文本消息」大类，不再落到「未分类」；
+//   - 配置了 AI 时恒归「文本消息」，AI 判定压到其下的子分类；
+//   - 纯表情文本归「表情」，与入库时的类型规整保持一致。
+test('文本消息：未配置 AI 时归入「文本消息」而非「未分类」', () => {
+  assert.deepEqual(textClassification(null), { category: TEXT_CATEGORY, sub: '', source: 'rule' });
+  assert.equal(textClassification(null).category, '文本消息');
+});
+
+test('文本消息：AI 判定作为「文本消息」下的子分类', () => {
+  assert.deepEqual(textClassification({ category: '工作', sub: '' }), {
+    category: '文本消息',
+    sub: '工作',
+    source: 'ai',
+  });
+  assert.deepEqual(textClassification({ category: '工作', sub: '项目A' }), {
+    category: '文本消息',
+    sub: '工作/项目A',
+    source: 'ai',
+  });
+});
+
+test('文本消息：AI 判定失败（返回 未分类 哨兵）时停在「文本消息」，不产生 未分类 子节点', () => {
+  assert.deepEqual(textClassification({ category: '未分类', sub: '' }), {
+    category: '文本消息',
+    sub: '',
+    source: 'rule',
+  });
+});
+
+test('文本消息：纯表情文本归入「表情」', () => {
+  assert.deepEqual(textClassification({ category: '工作' }, { emoji: true }), {
+    category: '表情',
+    sub: '',
+    source: 'rule',
+  });
+  assert.deepEqual(textClassification(null, { emoji: true }), { category: '表情', sub: '', source: 'rule' });
+});
 
 test('平台媒体类型直接映射为分类（无需 AI）', () => {
   const cases = [

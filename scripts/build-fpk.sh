@@ -35,7 +35,7 @@ echo "    ✓ cmd 脚本已确保 755"
 echo "==> 构建前端 (vite release, base=/app/clawvault/)"
 cd "$REPO/app/frontend"
 rm -rf ../backend/public/assets ../backend/public/index.html 2>/dev/null || true
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm run build -- --config vite.release.config.mjs
 cd "$REPO"
 if [ ! -f app/backend/public/index.html ]; then
@@ -51,7 +51,7 @@ cd "$REPO/app/backend"
 if [ -e node_modules/better-sqlite3/build/Release/better_sqlite3.node ]; then
   mv -f node_modules/better-sqlite3/build/Release/better_sqlite3.node /tmp/bsql-stale-$$.node 2>/dev/null || rm -f node_modules/better-sqlite3/build/Release/better_sqlite3.node 2>/dev/null || true
 fi
-npm install --omit=dev --ignore-scripts --no-audit --no-fund
+npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 cd "$REPO"
 
 # 4) 准备原生运行时（内置 Node + better-sqlite3 linux 预编译 + 可选 ffmpeg）

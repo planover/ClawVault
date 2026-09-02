@@ -38,9 +38,17 @@ jobs:
           VER="$(grep '^version=' manifest | head -1 | cut -d= -f2)"
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
+      - name: Generate checksums
+        run: |
+          cd dist-fpk
+          sha256sum "clawvault_${{ steps.ver.outputs.version }}_x86_64.fpk" > "clawvault_${{ steps.ver.outputs.version }}_x86_64.fpk.sha256"
+          cat "clawvault_${{ steps.ver.outputs.version }}_x86_64.fpk.sha256"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ClawVault v${{ steps.ver.outputs.version }}
-          files: dist-fpk/clawvault_${{ steps.ver.outputs.version }}_x86_64.fpk
+          files: |
+            dist-fpk/clawvault_${{ steps.ver.outputs.version }}_x86_64.fpk
+            dist-fpk/clawvault_${{ steps.ver.outputs.version }}_x86_64.fpk.sha256
           generate_release_notes: true

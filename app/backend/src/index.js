@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import config from './config.js';
+import * as vault from './vault.js';
 import { ChannelManager } from './manager.js';
 import { Storage } from './storage.js';
-import { classifyText, resolveClassification } from './classify.js';
+import { classifyText, resolveClassification, textClassification } from './classify.js';
+import { isPureEmojiText } from './wechatEmoji.js';
 import { transcribeVoice } from './stt.js';
 import { WSBroadcaster } from './ws.js';
 import { listProviders } from './providers/index.js';
@@ -30,7 +32,19 @@ function loadSettings() {
   const p = path.join(config.dataDir, 'settings.json');
   try {
     const s = JSON.parse(fs.readFileSync(p, 'utf8'));
-    if (s.ai) Object.assign(config.ai, s.ai);
+    if (s.ai) {
+      const ai = { ...s.ai };
+      // v1.0.32 起：落盘的 apiKey 为 AES-256-GCM 密文（与 channels.json 同源，主密钥 dataDir/.clvkey）。
+      // 兼容旧版明文：解密抛错即视为明文遗留值，内存保留、下次保存自动转密文。
+      if (ai.apiKey) {
+        try {
+          ai.apiKey = vault.decryptJSON(ai.apiKey, vault.loadKey(config.dataDir));
+        } catch {
+          /* 明文遗留值，保持不变 */
+        }
+      }
+      Object.assign(config.ai, ai);
+    }
     if (s.ingest) {
       const patch = { ...s.ingest };
       // 迁移：auto_reply_receipt（消息接收回执）在 v1.0.28 才真正接上代码。
@@ -51,12 +65,22 @@ function loadSettings() {
 
 function saveSettings() {
   const p = path.join(config.dataDir, 'settings.json');
+  // apiKey 落盘加密：内存中保持明文供运行时（classify / stt / 测试接口）使用，
+  // 写入磁盘前用 vault（.clvkey 主密钥）转成 AES-256-GCM 密文，避免明文密钥随备份/磁盘泄露。
+  let aiOut = config.ai;
+  if (config.ai.apiKey) {
+    try {
+      aiOut = { ...config.ai, apiKey: vault.encryptJSON(config.ai.apiKey, vault.loadKey(config.dataDir)) };
+    } catch (e) {
+      console.error('[ClawVault] AI Key 加密失败，按明文回退保存:', e?.message || e);
+    }
+  }
   fs.writeFileSync(
     p,
     JSON.stringify(
       {
         settingsVersion: SETTINGS_VERSION,
-        ai: config.ai,
+        ai: aiOut,
         ingest: config.ingest,
         classification: config.classification,
         archiveRoot: config.archiveRoot,
@@ -64,6 +88,7 @@ function saveSettings() {
       null,
       2,
     ),
+    { mode: 0o600 },
   );
 }
 
@@ -82,9 +107,26 @@ try {
 } catch (e) {
   console.error('[ClawVault] 旧媒体迁移失败（不影响运行）:', e?.message || e);
 }
+
+// 存量数据迁移：v1.0.32 起文本消息归位到「文本消息」大类，
+// 把更早期留在「未分类」下的存量文本 / 表情一次性搬过去，否则升级后看着像新规则没生效。
+try {
+  const mig = storage.migrateUncategorizedText();
+  if (mig.text || mig.emoji) {
+    console.log(`[ClawVault] 文本分类迁移完成：文本 ${mig.text} 条、表情 ${mig.emoji} 条归入对应大类`);
+  }
+} catch (e) {
+  console.error('[ClawVault] 文本分类迁移失败（不影响运行）:', e?.message || e);
+}
+
 const ws = new WSBroadcaster();
 // 归档回执服务（收到消息后自动回复发送者，详见 receipt.js）
-const receipt = new ReceiptService();
+// 计数口径为「当天累计」：查库取该会话自本地零点起的数量，
+// 空闲窗口只决定多久发一封、以及一封里合并多少条。
+const receipt = new ReceiptService({
+  debounceMs: Number(config.ingest.receipt_idle_ms) || 45000,
+  countSince: (channelId, peer, sinceTs) => storage.countMessagesByKindSince(channelId, peer, sinceTs),
+});
 
 // 消息处理链：白名单过滤 → 存「待分类」→ 广播
 //   → 纯文本 / 语音 → 写入 [通道]/聊天.xlsx（语音：社交端转写或 AI 补转，并保存音频）
@@ -173,12 +215,13 @@ async function handleChatMessage(channel, msg, record) {
       }
     }
   } else {
-    // 纯文本：AI 语义分类
-    const cat = await classifyText(text).catch(() => null);
-    if (cat) {
-      category = cat.category;
-      sub = cat.sub;
-    }
+    // 纯文本：恒归入「文本消息」大类；配置了 AI 时，AI 判定作为其下的子分类。
+    // 纯表情文本（如「[裂开]」）在入库时已被规整为 emoji 类型，这里同步归入「表情」。
+    const cat = textClassification(await classifyText(text).catch(() => null), {
+      emoji: isPureEmojiText(text),
+    });
+    category = cat.category;
+    sub = cat.sub;
   }
 
   const updated = storage.reclassify(record.id, category, sub);
@@ -299,9 +342,16 @@ if (config.socketPath) {
   }
   fs.mkdirSync(path.dirname(config.socketPath), { recursive: true });
   server.listen(config.socketPath, () => {
-    // 飞牛网关进程与应用运行用户不同，需放开 socket 访问位才能转发进来。
+    // 飞牛网关链路：浏览器 → nginx(www-data) → trim_http_cgi(以 root 运行) → 本 socket。
+    // 真正连入本 socket 的对端是 root 身份的网关进程，它具备 CAP_DAC_OVERRIDE，
+    // 因此把 socket 收到 0o600 即可放行网关、同时阻断本机其他任何本地账号/容器
+    // （含普通 admin、被攻破的第三方应用）直接 curl --unix-socket 越权读取聊天归档。
+    // 这是 P0-01 的真实修复点：应用层无法依赖网关身份头做鉴权（见上方 x-trim-* 中间件，
+    // 那些 Header 由飞牛网关注入、且 0o600 已挡住直连伪造），故以 OS 层 DAC 为唯一防线。
+    // 旧版 0o666 等于把私有聊天归档向全机开放，属 P0 高危。
+    // 注：Node 无 getPeerCredentials，无法在应用层按对端 uid 二次校验，0o600 即为全部防线。
     try {
-      fs.chmodSync(config.socketPath, 0o666);
+      fs.chmodSync(config.socketPath, 0o600);
     } catch (e) {
       console.error(`设置 socket 权限失败: ${e.message}`);
     }

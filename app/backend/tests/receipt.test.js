@@ -100,3 +100,71 @@ test('回执：纯表情文本归入「表情消息」', async () => {
   assert.equal(ch.sent[0].text, `${expectedHeader()} 共收到 1 条消息\n表情消息 1 条`);
   svc.dispose();
 });
+
+// 回执抬头带日期（「YYYY年MM月DD日 共收到 N 条消息」），因此 N 必须是当天累计数，
+// 而不是空闲窗口内那一批的数量。v1.0.31 用 3.5s 去抖 + 窗口内计数，
+// 人类打字间隔普遍大于该窗口，结果每条消息各发一封且都报「共收到 1 条消息」。
+test('回执：注入 countSince 时按"当天累计"计数，而不是只算本批次的 1 条', async () => {
+  // 模拟：今天这个会话此前已累计 4 条文字 + 1 条图片
+  const svc = new ReceiptService({ debounceMs: 20, countSince: async () => ({ text: 4, image: 1 }) });
+  const ch = fakeChannel();
+  svc.handle(ch, { peer: 'u6', kind: 'text' }, true);
+  await wait(80);
+  assert.equal(ch.sent[0].text, `${expectedHeader()} 共收到 5 条消息\n文字消息 4 条\n图片消息 1 条`);
+  svc.dispose();
+});
+
+test('回执：countSince 传入的 sinceTs 是本地零点', async () => {
+  let seen = null;
+  const svc = new ReceiptService({ debounceMs: 20, countSince: async (_cid, _peer, since) => { seen = since; return { text: 1 }; } });
+  const ch = fakeChannel();
+  svc.handle(ch, { peer: 'u7', kind: 'text' }, true);
+  await wait(80);
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  assert.equal(seen, midnight.getTime());
+  svc.dispose();
+});
+
+test('回执：sticker 与 emoji 合并为一行「表情消息」，不重复输出', async () => {
+  const svc = new ReceiptService({ debounceMs: 20, countSince: async () => ({ sticker: 2, emoji: 3 }) });
+  const ch = fakeChannel();
+  svc.handle(ch, { peer: 'u8', kind: 'sticker' }, true);
+  await wait(80);
+  assert.equal(ch.sent[0].text, `${expectedHeader()} 共收到 5 条消息\n表情消息 5 条`);
+  svc.dispose();
+});
+
+test('回执：空闲窗口内的新消息顺延计时，会话静默后才发一封', async () => {
+  const svc = new ReceiptService({ debounceMs: 60, countSince: async () => ({ text: 1 }) });
+  const ch = fakeChannel();
+  svc.handle(ch, { peer: 'u9', kind: 'text' }, true);
+  await wait(30);
+  assert.equal(ch.sent.length, 0, '窗口未过半时不应发送');
+  svc.handle(ch, { peer: 'u9', kind: 'text' }, true); // 顺延
+  await wait(30);
+  assert.equal(ch.sent.length, 0, '被新消息顺延后仍不应发送');
+  await wait(60);
+  assert.equal(ch.sent.length, 1, '会话静默满一个窗口后只发一封');
+  svc.dispose();
+});
+
+test('回执：countSince 抛错时不发送回执，也不抛出到调用方', async () => {
+  const svc = new ReceiptService({ debounceMs: 20, countSince: async () => { throw new Error('db down'); } });
+  const ch = fakeChannel();
+  svc.handle(ch, { peer: 'u10', kind: 'text' }, true);
+  await wait(80);
+  assert.equal(ch.sent.length, 0);
+  svc.dispose();
+});
+
+test('回执：上下文 token 透传给 send，便于落到正确的会话', async () => {
+  const svc = new ReceiptService({ debounceMs: 20, countSince: async () => ({ text: 1 }) });
+  const seen = [];
+  const ch = { id: 'c3', send: async (peer, text, ctx) => seen.push({ peer, text, ctx }) };
+  svc.handle(ch, { peer: 'u11', kind: 'text', contextToken: 'ctx-abc' }, true);
+  await wait(80);
+  assert.equal(seen[0].ctx.contextToken, 'ctx-abc');
+  assert.equal(seen[0].ctx.receipt, true);
+  svc.dispose();
+});

@@ -48,6 +48,23 @@ export function platformKindToCategory(kind) {
   return KIND_MAP[k] || null;
 }
 
+// 纯文本消息的大类。与图片/语音/视频/文件等平台类型并列，
+// 用户约定：文本消息默认就落到这里，而不是落到「未分类」。
+export const TEXT_CATEGORY = '文本消息';
+
+// 文本消息的最终归类（纯函数，便于测试）：
+//   - 未配置 AI，或 AI 判定失败（classifyText 会返回 未分类 哨兵）→ 停在「文本消息」本身，sub 留空；
+//   - 配置了 AI → 恒归入「文本消息」大类，把 AI 判定的主分类（及可选子分类）压到 sub，
+//     形成 文本消息 > 工作/项目A 这样的层级，避免 AI 分类与平台类型混在同一层。
+//   - 纯表情文本：入库时 storage.saveMessage 已把它规整为 emoji 类型，这里同步归入「表情」，
+//     与分类统计、回执文案（「表情消息」）保持一致。
+export function textClassification(ai, { emoji = false } = {}) {
+  if (emoji) return { category: '表情', sub: '', source: 'rule' };
+  if (!ai || ai.category === '未分类') return { category: TEXT_CATEGORY, sub: '', source: 'rule' };
+  const parts = [ai.category, ai.sub].filter(Boolean);
+  return { category: TEXT_CATEGORY, sub: parts.join('/'), source: ai.source || 'ai' };
+}
+
 // 分类决策（纯函数，便于测试）：
 //   - 开启「优先平台类型」且平台能判定类型 → 直接采用，source='platform'（不调 AI）
 //   - 纯文本 / 平台无类型 / 关闭开关 → source='ai'，由调用方再走 classifyText
@@ -67,8 +84,11 @@ export async function classifyText(text) {
 
   const url = `${baseUrl.replace(/\/$/, '')}/v1/messages`;
   try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), config.ai.timeout_ms || 15000);
     const res = await fetch(url, {
       method: 'POST',
+      signal: ctrl.signal,
       headers: {
         'content-type': 'application/json',
         'x-api-key': apiKey,
@@ -80,7 +100,7 @@ export async function classifyText(text) {
         system: config.classification.system_prompt,
         messages: [{ role: 'user', content: text.slice(0, 4000) }],
       }),
-    });
+    }).finally(() => clearTimeout(timer));
     if (!res.ok) {
       recordAiFailure({ stage: 'classifyText', status: res.status });
       console.error(`[ClawVault] AI 分类接口返回异常状态 ${res.status}`);
@@ -118,8 +138,11 @@ export async function testConnection({ apiKey, baseUrl, model }) {
   const sample = '提醒我明天上午十点跟客户开会，记得带合同。';
   const t0 = Date.now();
   try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), config.ai.timeout_ms || 15000);
     const res = await fetch(url, {
       method: 'POST',
+      signal: ctrl.signal,
       headers: {
         'content-type': 'application/json',
         'x-api-key': apiKey,
@@ -131,7 +154,7 @@ export async function testConnection({ apiKey, baseUrl, model }) {
         system: '你是一个对话归档分类器。用户会给你一段消息，请判断它应归入哪个分类。只输出 JSON，如 {"category":"工作","sub":"会议"}。',
         messages: [{ role: 'user', content: sample }],
       }),
-    });
+    }).finally(() => clearTimeout(timer));
     const latencyMs = Date.now() - t0;
     if (!res.ok) {
       const txt = await res.text().catch(() => '');

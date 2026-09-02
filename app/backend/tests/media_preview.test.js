@@ -35,6 +35,7 @@ let baseUrl;
 let zipId;
 let tgzId;
 let docxId;
+let xlsxAsZipId;
 
 before(async () => {
   storage = new Storage({ dataDir, archiveRoot });
@@ -98,6 +99,31 @@ before(async () => {
   zipId = addFileMessage('sample.zip');
   tgzId = addFileMessage('sample.tgz');
   docxId = addFileMessage('sample.docx');
+
+  // 复刻 v1.0.31 真机上的预览失效现场：
+  // xlsx 本质是 ZIP 容器，落盘时魔数探到 'zip'，于是磁盘上叫「…王浩.zip」，
+  // 而消息里的原始文件名仍是「…王浩.xlsx」。
+  // 修复前：/info 按原始名报 xlsx（前端以为能预览），/preview 按磁盘名算出 zip → 415。
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  const sheet = wb.addWorksheet('汇总');
+  sheet.addRow(['项目', '金额']);
+  sheet.addRow(['差旅', 1280]);
+  await wb.xlsx.writeFile(path.join(archiveRoot, '汇总-20260829-王浩.zip'));
+  {
+    const rec = storage.saveMessage({
+      channelId: 'c1',
+      channelName: '测试通道',
+      peer: 'peer1',
+      text: '',
+      kind: 'file',
+      category: '未分类',
+      sub: '',
+      filename: '汇总-20260829-王浩.xlsx',
+    });
+    storage.setMedia(rec.id, '汇总-20260829-王浩.zip'); // 磁盘名 ≠ 原始名
+    xlsxAsZipId = rec.id;
+  }
 
   const app = express();
   app.use('/api/media', createMediaRouter({ storage }));
@@ -207,6 +233,43 @@ test('GET /api/media/info/:id 返回文件名/大小/MIME/扩展名', async () =
   assert.equal(j.ext, 'zip');
   assert.equal(j.mime, 'application/zip');
   assert.ok(j.size > 0);
+});
+
+// 回归（v1.0.31 真机缺陷）：磁盘上被存成 .zip 的 xlsx 必须能预览。
+// 扩展名判定统一为「原始文件名优先、磁盘名兜底」之前，
+// /info 报 xlsx 而 /preview 按磁盘算出 zip，直接 415，用户看到「文件仍然不能预览」。
+test('磁盘名为 .zip 但原始名为 .xlsx 时，info 与 preview 口径一致（不再 415）', async () => {
+  const info = await fetch(`${baseUrl}/api/media/info/${xlsxAsZipId}`);
+  assert.equal(info.status, 200);
+  const meta = await info.json();
+  assert.equal(meta.ext, 'xlsx', 'info 应按原始文件名报 xlsx');
+  assert.equal(meta.mime, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+  const preview = await fetch(`${baseUrl}/api/media/preview/${xlsxAsZipId}`);
+  assert.equal(preview.status, 200, '预览不应再返回 415（扩展名口径曾与 info 分叉）');
+  assert.ok((preview.headers.get('content-type') || '').includes('text/html'));
+  const html = await preview.text();
+  assert.ok(html.includes('汇总'), '应渲染出工作表名');
+  assert.ok(html.includes('1280'), '应渲染出单元格内容');
+});
+
+test('原始名缺失时退回磁盘扩展名（zip 仍按压缩包处理）', async () => {
+  const rec = storage.saveMessage({
+    channelId: 'c1',
+    channelName: '测试通道',
+    peer: 'peer1',
+    text: '',
+    kind: 'file',
+    category: '未分类',
+    sub: '',
+    filename: '',
+  });
+  storage.setMedia(rec.id, 'sample.zip');
+  const info = await fetch(`${baseUrl}/api/media/info/${rec.id}`);
+  const meta = await info.json();
+  assert.equal(meta.ext, 'zip');
+  const list = await fetch(`${baseUrl}/api/media/list/${rec.id}`);
+  assert.equal(list.status, 200, '无原始名时应按磁盘扩展名走压缩包列表');
 });
 
 test('路径穿越被拒绝（403）', async () => {

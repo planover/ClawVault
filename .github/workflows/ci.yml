@@ -25,14 +25,9 @@ jobs:
       - name: Install backend dependencies
         working-directory: app/backend
         run: |
-          # 使用 npm install 而非 npm ci：当前 package-lock.json 与 package.json
-          # 不同步（缺少 silk-wasm），在本地网络可用时应执行 npm install 重新生成
-          # lockfile 后再切换回 npm ci。此处先以 npm install 保证 CI 能安装完整依赖。
-          for i in 1 2 3; do
-            npm install --no-audit --no-fund && break
-            echo "npm install attempt $i failed, retrying..."
-            sleep 5
-          done
+          # 可重现构建：package-lock.json 已与 package.json 同步（含 silk-wasm 等全部依赖），
+          # 使用 npm ci 严格按 lockfile 安装，杜绝「package.json 漂移 + 自动拉取最新」带来的供应链风险。
+          npm ci --no-audit --no-fund
 
       - name: Run tests
         working-directory: app/backend

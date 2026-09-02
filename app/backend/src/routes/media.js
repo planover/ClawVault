@@ -55,6 +55,26 @@ function contentDisposition(filename) {
   return `attachment; ${legacy}filename*=UTF-8''${encoded}`;
 }
 
+// 媒体扩展名的**唯一**判定入口。所有路由（info / preview / list / thumb / 原文件下载）
+// 都必须走这里，禁止各自 path.extname(abs)——口径一分叉就会出现"看得见却打不开"。
+//
+// 为什么不能用磁盘扩展名：落盘时的扩展名来自魔数探测（detectMediaExt），
+// 而魔数只能探到容器层，ZIP 家族（xlsx / docx / pptx / apk / jar…）一律被判成 zip。
+// 于是「汇总.xlsx」落盘成「汇总.zip」，而 /info 展示用的是原始文件名的扩展名（xlsx）。
+// 结果：/info 报 xlsx → 前端以为能预览 → /preview 按磁盘算出 zip → 415 不支持。
+// 磁盘上真实存在的历史归档就是这样一批 .zip 命名的 Office 文件。
+//
+// 规则：**原始文件名优先，磁盘扩展名仅作兜底**。
+// 原始名是社交端与用户认定的真实类型；原始名缺失时才退回磁盘名
+// （此时磁盘名来自魔数，对非 ZIP 家族本身已足够可信）。
+export function resolveMediaExt(m, abs) {
+  if (m && m.filename) {
+    const fromName = path.extname(m.filename).slice(1).toLowerCase();
+    if (fromName) return fromName;
+  }
+  return path.extname(abs).slice(1).toLowerCase();
+}
+
 // 把 Office 渲染出的 HTML 包成独立、自带排版的文档（iframe 是隔离文档，
 // 不继承应用 CSS 变量，这里内联一套中性、可读性好的样式）。
 function wrapOfficeHtml(bodyHtml, title) {
@@ -118,10 +138,22 @@ export default function createMediaRouter({ storage }) {
     const m = storage.getMessage(parseInt(id, 10));
     if (!m || !m.media) return null;
     const root = path.resolve(storage.archiveRoot);
-    const abs = path.resolve(storage.archiveRoot, m.media);
+    const abs = path.resolve(root, m.media);
+    // 词法越界（含 ../ 逃逸）先判，不依赖文件存在 → 稳定返回 403 便于排障
     if (abs !== root && !abs.startsWith(root + path.sep)) return { traversal: true };
-    if (!fs.existsSync(abs)) return null;
-    return { m, abs };
+    // 符号链接逃逸：解析真实路径后必须仍在媒体根内（词法合法但 symlink 指到根外即拦截）。
+    // root 或文件尚不存在时退化为词法校验（已通过上方），不误伤空安装/首次归档。
+    let realRoot = root;
+    let real = abs;
+    try {
+      realRoot = fs.realpathSync(root);
+      real = fs.realpathSync(abs);
+    } catch {
+      /* 退化为词法校验 */
+    }
+    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return { traversal: true };
+    if (!fs.existsSync(real)) return null;
+    return { m, abs: real };
   }
 
   // 统一消费 resolveMedia 的三种结果：越界 403 / 缺失 404 / 正常则交给 handler
@@ -133,7 +165,7 @@ export default function createMediaRouter({ storage }) {
 
   function serveOriginal(req, res, m, abs) {
     const stat = fs.statSync(abs);
-    const type = MIME[path.extname(abs).slice(1).toLowerCase()] || 'application/octet-stream';
+    const type = MIME[resolveMediaExt(m, abs)] || 'application/octet-stream';
     // 预览请求（?inline=1）用 inline 处置，让浏览器内嵌渲染（尤其 PDF 的 iframe）；
     // 否则用 attachment 触发下载。两者都带文件名，保证"另存为"拿到原名。
     const disposition = req.query.inline ? 'inline' : 'attachment';
@@ -181,10 +213,7 @@ export default function createMediaRouter({ storage }) {
     } catch {
       return res.status(404).json({ error: 'not found' });
     }
-    const ext = path
-      .extname(m.filename || abs)
-      .slice(1)
-      .toLowerCase();
+    const ext = resolveMediaExt(m, abs);
     const mime = MIME[ext] || 'application/octet-stream';
     res.json({
       filename: m.filename || path.basename(abs),
@@ -205,7 +234,7 @@ export default function createMediaRouter({ storage }) {
     if (hit && hit.traversal) return res.status(403).json({ error: 'forbidden' });
     if (!hit) return res.status(404).json({ error: 'not found' });
     const { m, abs } = hit;
-    const ext = path.extname(abs).slice(1).toLowerCase();
+    const ext = resolveMediaExt(m, abs);
     const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
     if (!imgExts.includes(ext) || (m.kind !== 'image' && m.kind !== 'sticker')) {
       return serveOriginal(req, res, m, abs);
@@ -242,7 +271,7 @@ export default function createMediaRouter({ storage }) {
     if (hit && hit.traversal) return res.status(403).json({ error: 'forbidden' });
     if (!hit) return res.status(404).json({ error: 'not found' });
     const { m, abs } = hit;
-    const ext = path.extname(abs).slice(1).toLowerCase();
+    const ext = resolveMediaExt(m, abs);
     try {
       let html = '';
       if (ext === 'docx') {
@@ -273,7 +302,7 @@ export default function createMediaRouter({ storage }) {
     if (hit && hit.traversal) return res.status(403).json({ error: 'forbidden' });
     if (!hit) return res.status(404).json({ error: 'not found' });
     const { m, abs } = hit;
-    const ext = path.extname(abs).slice(1).toLowerCase();
+    const ext = resolveMediaExt(m, abs);
     try {
       let entries = [];
       if (ext === 'zip') {

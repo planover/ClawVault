@@ -608,11 +608,21 @@ export class Storage {
 
       // 扩展名：优先用解密后真实文件头判定，其次回落 media.ext / URL 后缀
       const urlPath = media.url ? media.url.split('?')[0] : '';
-      const ext =
+      let ext =
         detectMediaExt(buf) ||
         media.ext ||
         (urlPath && path.extname(urlPath).slice(1)) ||
         'bin';
+      // ZIP 家族例外：xlsx / docx / pptx / apk / jar… 的容器都是 ZIP，
+      // 魔数只能探到容器层，一律返回 'zip'。若照搬魔数结果落盘，
+      // 「汇总.xlsx」会存成「汇总.zip」——文件管理器里看不出真实类型，
+      // 按扩展名分发的预览 / 转换也会全部落空（这正是 v1.0.31 预览失效的根因）。
+      // 因此探到 zip 时，只要原始文件名带了明确扩展名，就以原始名为准。
+      // 图片 / 音视频等魔数能精确定位的类型不受影响，仍以魔数为准。
+      if (ext === 'zip') {
+        const nameExt = media.filename ? path.extname(media.filename).slice(1).toLowerCase() : '';
+        if (nameExt) ext = nameExt;
+      }
       const safeExt = String(ext).replace(/[^\w]/g, '').slice(0, 8) || 'bin';
       const base = this._mediaBaseName({ kind, text, filename: media.filename });
       const catDir = Storage.catDirForKind(kind);
@@ -694,6 +704,33 @@ export class Storage {
       }
     }
     return n;
+  }
+
+  // 存量数据迁移：v1.0.32 起文本消息归入「文本消息」大类（配了 AI 才细分到子分类）。
+  // 更早版本在「未配置 AI」时把文本留在「未分类」，升级后这些存量行仍会挂在「未分类」下，
+  // 看起来像新规则没生效。这里一次性把它们归位：
+  //   kind=text  → 文本消息；kind=emoji（含纯表情文本） → 表情。
+  // 只处理 category 仍为「未分类」的行，幂等、可重复执行；无存量时是空操作。
+  migrateUncategorizedText() {
+    const text = this._stmt("UPDATE messages SET category = '文本消息', sub = '' WHERE category = '未分类' AND kind = 'text'")
+      .run().changes;
+    const emoji = this._stmt("UPDATE messages SET category = '表情', sub = '' WHERE category = '未分类' AND kind = 'emoji'")
+      .run().changes;
+    return { text, emoji };
+  }
+
+  // 统计某个会话自 sinceTs（毫秒时间戳）起、按消息类型分组的数量。
+  // 归档回执用它取"当天累计"口径，避免重启或跨批次导致计数漂移。
+  countMessagesByKindSince(channelId, peer, sinceTs) {
+    const rows = this._stmt(
+      'SELECT kind, COUNT(*) AS c FROM messages WHERE channel_id = ? AND peer = ? AND ts >= ? GROUP BY kind',
+    ).all(channelId, peer, sinceTs);
+    const out = {};
+    for (const r of rows) {
+      const k = r.kind || 'text';
+      out[k] = (out[k] || 0) + r.c;
+    }
+    return out;
   }
 
   // 列表查询（支持通道/分类/子分类/类型/搜索过滤 + 分页）

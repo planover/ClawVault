@@ -76,13 +76,39 @@ export function extractMedia(msg, kind) {
 
 // 诊断：图片/视频/文件/表情消息取不到直链下载地址时，把原始 item 记录到日志，
 // 用于在真机拿到 iLink 真实媒体字段结构（image_id/aes_key/cdn…）以补齐字节下载。
+// 注意：item 内含 aes_key 等解密密钥，落盘前必须递归脱敏，否则等同于把聊天媒体密钥
+// 明文写进可随备份泄露的日志（P1-05）。
 const MEDIA_KINDS = ['image', 'video', 'file', 'sticker', 'voice'];
+
+// 递归脱敏：抹掉含 aes/key/secret/token 的字段，保留结构用于定位缺字段问题。
+function redactSecrets(node) {
+  if (Array.isArray(node)) return node.map(redactSecrets);
+  if (!node || typeof node !== 'object') return node;
+  const out = {};
+  for (const [k, v] of Object.entries(node)) {
+    const lk = String(k).toLowerCase();
+    if (lk.includes('aes') || lk.includes('key') || lk === 'secret' || lk === 'token' || lk.includes('password')) {
+      out[k] = '<redacted>';
+    } else if (v && typeof v === 'object') {
+      out[k] = redactSecrets(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 function diagRawMedia(msg, kind) {
   if (!config?.dataDir) return;
   try {
     const f = path.join(config.dataDir, 'clawvault-media-debug.log');
-    const entry = { ts: new Date().toISOString(), kind, from: msg.from_user_id, item: msg.item_list?.[0] };
-    fs.appendFileSync(f, JSON.stringify(entry) + '\n');
+    const entry = {
+      ts: new Date().toISOString(),
+      kind,
+      from: msg.from_user_id,
+      item: redactSecrets(msg.item_list?.[0]),
+    };
+    fs.appendFileSync(f, JSON.stringify(entry) + '\n', { mode: 0o600 });
   } catch {
     /* 诊断日志失败不影响主流程 */
   }
