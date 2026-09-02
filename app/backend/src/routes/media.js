@@ -254,17 +254,13 @@ export default function createMediaRouter({ storage }) {
     if (w < 16) w = 16;
     if (w > 1280) w = 1280;
     try {
-      // jimp 0.22 是 CommonJS：命名导入 { Jimp } 取不到，需从 default 兜底。
-      // 其 module.exports 即 Jimp 类本身（也挂了 .Jimp），统一兼容两种形态。
-      const mod = await import('jimp');
-      const Jimp = mod.Jimp ?? (mod.default && (mod.default.Jimp ?? mod.default));
+      // jimp 1.x 是 ESM：命名导入 { Jimp }；scaleToFit 已无 AUTO 常量，改用 scale(factor) 等比缩放。
+      const { Jimp } = await import('jimp');
       const image = await Jimp.read(abs);
-      image.scaleToFit(w, Jimp.AUTO);
+      image.scale(w / image.bitmap.width);
       const asPng = m.kind === 'sticker' || ext === 'png' || ext === 'gif' || ext === 'webp' || ext === 'bmp';
       const mime = asPng ? 'image/png' : 'image/jpeg';
-      const buf = asPng
-        ? await image.getBufferAsync(Jimp.MIME_PNG)
-        : await image.getBufferAsync(Jimp.MIME_JPEG);
+      const buf = await image.getBuffer(mime);
       res.set('Content-Type', mime);
       res.set('Cache-Control', 'public, max-age=86400');
       res.set('Content-Length', buf.length);

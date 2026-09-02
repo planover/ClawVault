@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
-import tar from 'tar';
+import * as tar from 'tar';
 import { Storage } from '../src/storage.js';
 import createMediaRouter from '../src/routes/media.js';
 

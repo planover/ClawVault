@@ -14,11 +14,13 @@
     "better-sqlite3": "11.10.0",
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
-    "jimp": "0.22.12",
+    "jimp": "^1.6.1",
     "mammoth": "^1.12.2",
     "qrcode": "^1.5.4",
     "silk-wasm": "^3.2.0",
-    "tar": "^6.2.1",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "tar": "^7.5.22"
   }
 }
