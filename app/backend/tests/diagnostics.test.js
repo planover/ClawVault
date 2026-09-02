@@ -24,7 +24,7 @@ function startServer(app) {
 }
 const base = (server) => `http://127.0.0.1:${server.address().port}`;
 
-test('GET /api/health 返回运行状况 JSON（含版本/统计/通道/AI失败）', async () => {
+test('GET /api/health 返回运行状况 JSON（统计/通道/AI失败，且不泄露版本号）', async () => {
   const manager = {
     listChannels: () => [{ id: 'c1', name: '通道1', providerType: 'wechat_ilink', connected: true, needRescan: false }],
   };
@@ -36,7 +36,7 @@ test('GET /api/health 返回运行状况 JSON（含版本/统计/通道/AI失败
     assert.equal(res.status, 200);
     const j = await res.json();
     assert.equal(j.ok, true);
-    assert.ok(typeof j.app.version === 'string' || j.app.version === null);
+    assert.ok(!('version' in j.app), 'health 接口不应泄露版本号（安全整改 WEB 低危）');
     assert.ok(j.app.uptimeSec >= 0);
     assert.ok(typeof j.database.total === 'number');
     assert.ok(typeof j.database.byKind === 'object');
