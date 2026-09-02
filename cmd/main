@@ -30,13 +30,6 @@ DATA_SHARE="${TRIM_DATA_SHARE:-}"
 [ -z "$DATA_SHARE" ] && DATA_SHARE="$(printf '%s' "${TRIM_DATA_SHARE_PATHS:-}" | cut -d: -f1)"
 [ -z "$DATA_SHARE" ] && DATA_SHARE="/vol1/@appdata/clawvault"
 [ -d "$DATA_SHARE" ] || mkdir -p "$DATA_SHARE" 2>/dev/null || true
-# 旧版曾把数据写在 /vol1/@appdata/clawvault；迁移到 @appshare 后该目录成为孤儿残留
-# （含旧 .clvkey 等密钥，属泄露面）。仅在「当前活跃数据目录不是它」时才清理，避免误删活跃数据。
-LEGACY_DIR="/vol1/@appdata/clawvault"
-if [ "$DATA_SHARE" != "$LEGACY_DIR" ] && [ -d "$LEGACY_DIR" ]; then
-  log "检测到旧数据残留 $LEGACY_DIR（已迁移至 $DATA_SHARE），清理以去除旧密钥泄露面..."
-  rm -rf "$LEGACY_DIR" 2>/dev/null || true
-fi
 LOG_DIR="$DATA_SHARE"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/main.log"
@@ -97,6 +90,14 @@ die() {
   fi
   exit 1
 }
+
+# 旧版曾把数据写在 /vol1/@appdata/clawvault；迁移到 @appshare 后该目录成为孤儿残留
+# （含旧 .clvkey 等密钥，属泄露面）。仅在「当前活跃数据目录不是它」时才清理，避免误删活跃数据。
+LEGACY_DIR="/vol1/@appdata/clawvault"
+if [ "$DATA_SHARE" != "$LEGACY_DIR" ] && [ -d "$LEGACY_DIR" ]; then
+  log "检测到旧数据残留 $LEGACY_DIR（已迁移至 $DATA_SHARE），清理以去除旧密钥泄露面..."
+  rm -rf "$LEGACY_DIR" 2>/dev/null || true
+fi
 
 is_running() {
   [ -f "$PID_FILE" ] || return 1
