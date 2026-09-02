@@ -10,12 +10,12 @@
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {
-    "adm-zip": "^0.5.16",
+    "adm-zip": "^0.6.0",
     "better-sqlite3": "11.10.0",
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "jimp": "0.22.12",
-    "mammoth": "^1.9.0",
+    "mammoth": "^1.12.2",
     "qrcode": "^1.5.4",
     "silk-wasm": "^3.2.0",
     "tar": "^6.2.1",

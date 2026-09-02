@@ -57,6 +57,20 @@ cd "$REPO"
 # 4) 准备原生运行时（内置 Node + better-sqlite3 linux 预编译 + 可选 ffmpeg）
 bash "$SCRIPT_DIR/prepare-runtime.sh"
 
+# 4.5) OPS-P1：收紧应用目录属主/权限——应用代码仅 root 可读执行、包用户 clawvault 不可写，
+# 杜绝 clawvault 被拿下后篡改代码实现 RCE 持久化（可写数据只在 @appshare）。
+# 同时把 node_modules/.bin 从 777 收为 755（低危：全可写的可执行文件可被篡改）。
+# 注意：只改「我们打进包的子目录」（cmd / app/backend / app/ui / app/runtime），
+# 不动 fnOS 创建的顶层控制目录（socket 落在其下，需保持 clawvault 可写）。
+echo "==> 收紧应用目录权限（OPS-P1：代码目录去 group/other 写位；.bin 收 755）"
+for d in cmd app/backend app/ui app/runtime; do
+  [ -d "$REPO/$d" ] || continue
+  chmod -R go-w "$REPO/$d"
+done
+chmod 755 "$REPO/cmd/main" 2>/dev/null || true
+find "$REPO/app/backend/node_modules/.bin" -type f -exec chmod 755 {} + 2>/dev/null || true
+echo "    ✓ 应用目录权限已收紧（代码目录 group/other 不可写，.bin=755）"
+
 # 5) 内层 app.tgz：backend（node_modules + public）/ ui / runtime
 #    不含 frontend 源码（已构建进 public）、不含 data/archive、不含测试与日志
 [ -d app ] || { echo "✗ 缺少 app/ 目录" >&2; exit 1; }

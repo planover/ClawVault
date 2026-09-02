@@ -72,7 +72,6 @@ export default function createHealthRouter({ storage, manager, config, startedAt
       timestamp: Date.now(),
       app: {
         name: 'ClawVault（爪匣）',
-        version: manifestVer,
         uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         node: process.version,
         platform: process.platform,
@@ -114,8 +113,6 @@ export default function createHealthRouter({ storage, manager, config, startedAt
       },
       stt: { configured: Boolean(config.ai.sttUrl) },
       versionConsistency: {
-        manifest: manifestVer,
-        composeRoot: composeVer,
         consistent: manifestVer && composeVer ? manifestVer === composeVer : null,
       },
     };
@@ -123,7 +120,6 @@ export default function createHealthRouter({ storage, manager, config, startedAt
     if (req.query.simple !== undefined) {
       return res.json({
         ok: payload.ok,
-        version: manifestVer,
         uptimeSec: payload.app.uptimeSec,
         messages: stats.total,
         mediaGaps: stats.mediaGaps,

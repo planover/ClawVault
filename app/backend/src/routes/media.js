@@ -100,7 +100,18 @@ function wrapOfficeHtml(bodyHtml, title) {
 </style></head><body>${bodyHtml}</body></html>`;
 }
 
-// Excel 工作簿 → 多张表格的 HTML（每张表带标题与表头）
+// Office 预览 HTML 清洗（低危：预览未 sandbox）。
+// mammoth / exceljs 输出本身基本安全，但作为纵深防御，剥离可能执行代码的标签与属性，
+// 配合下方 Content-Security-Policy 头，杜绝恶意文档在同源 iframe 内执行脚本或外联资源。
+function sanitizeOfficeHtml(s) {
+  return String(s)
+    .replace(/<\s*(script|iframe|object|embed|link|meta|style)[\s\S]*?<\s*\/\s*\1>/gi, '')
+    .replace(/<\s*(script|iframe|object|embed|link|meta|style)[^>]*>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, '')
+    .replace(/(href|src)\s*=\s*("|')\s*javascript:[^"']*\2/gi, '$1=$2#$2');
+}
 function renderXlsx(wb) {
   const esc = (v) =>
     String(v ?? '')
@@ -286,8 +297,15 @@ export default function createMediaRouter({ storage }) {
       } else {
         return res.status(415).json({ error: 'unsupported' });
       }
+      // 纵深防御：清洗脚本/事件属性，并加 CSP 禁止任何脚本/外联资源执行
+      html = sanitizeOfficeHtml(html);
       res.set('Content-Type', 'text/html; charset=utf-8');
       res.set('Cache-Control', 'public, max-age=300');
+      res.set(
+        'Content-Security-Policy',
+        "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src 'unsafe-inline'",
+      );
+      res.set('X-Content-Type-Options', 'nosniff');
       return res.send(html);
     } catch (e) {
       console.error('[media] 预览生成失败:', e?.message || e);

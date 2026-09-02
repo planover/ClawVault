@@ -40,6 +40,17 @@ export class Storage {
     this.db = new Database(path.join(dataDir, 'archive.db'));
     this._stmts = new Map(); // 预编译语句缓存（见 _stmt）
     this.db.pragma('journal_mode = WAL');
+    // 低危：WAL 无 checkpoint —— 显式设定自动 checkpoint 阈值，并周期 TRUNCATE 收敛 WAL 文件，
+    // 避免归档.db-wal / -shm 长期不收敛导致体积膨胀与恢复变慢。
+    this.db.pragma('wal_autocheckpoint = 1000');
+    const _walTimer = setInterval(() => {
+      try {
+        this.db.pragma('wal_checkpoint(TRUNCATE)');
+      } catch {
+        /* 忽略瞬时失败 */
+      }
+    }, 15 * 60 * 1000);
+    if (_walTimer && typeof _walTimer.unref === 'function') _walTimer.unref();
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

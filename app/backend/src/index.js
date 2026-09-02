@@ -57,6 +57,7 @@ function loadSettings() {
     }
     if (s.classification) Object.assign(config.classification, s.classification);
     if (s.archiveRoot) config.archiveRoot = s.archiveRoot;
+    if (s.ownerUserId) config.ownerUserId = String(s.ownerUserId);
   } catch {
     /* 无持久化设置则用默认 */
   }
@@ -84,6 +85,7 @@ function saveSettings() {
         ingest: config.ingest,
         classification: config.classification,
         archiveRoot: config.archiveRoot,
+        ownerUserId: config.ownerUserId,
       },
       null,
       2,
@@ -93,6 +95,61 @@ function saveSettings() {
 }
 
 loadSettings();
+config.ownerUserId = config.ownerUserId || '';
+
+// ---- 权限分级（WEB-P1-01）----
+// 飞牛网关注入 x-trim-* 身份；任意能登录飞牛的人默认可读，
+// 但删除 / 改设置 / 重分类等写操作只允许管理员。
+// 判定：①飞牛管理员（x-trim-isadmin=true）②设置里记录的 ownerUserId
+//        （首个发起写操作的管理员自动成为 owner）。
+// 无网关身份（直连 / 开发模式）放行，单用户场景不挡。
+function ensureOwner(uid) {
+  if (!config.ownerUserId && uid) {
+    config.ownerUserId = String(uid);
+    try {
+      saveSettings();
+    } catch {
+      /* 持久化失败不影响本次放行 */
+    }
+  }
+}
+function isAdminUser(req) {
+  const u = req.fnUser;
+  if (!u) return false;
+  if (u.isAdmin) return true;
+  if (config.ownerUserId && u.uid === config.ownerUserId) return true;
+  return false;
+}
+function requireAdmin(req, res, next) {
+  if (isAdminUser(req)) return next();
+  if (req.fnUser && !config.ownerUserId) {
+    ensureOwner(req.fnUser.uid);
+    return next();
+  }
+  if (!req.fnUser && !config.gatewayPrefix) return next(); // 直连 / 开发模式放行
+  return res.status(403).json({ error: '需要管理员权限' });
+}
+
+// ---- 轻量限流（低危：无限流）----
+// 内存固定窗口，按 用户ID（有网关身份时）或 IP 计数；不引入新依赖。
+const _rateBuckets = new Map();
+function rateLimit({ windowMs, max }) {
+  return (req, res, next) => {
+    const key = (req.fnUser && req.fnUser.uid) || req.ip || 'anon';
+    const now = Date.now();
+    const b = _rateBuckets.get(key);
+    if (!b || now - b.start > windowMs) {
+      _rateBuckets.set(key, { start: now, count: 1 });
+      return next();
+    }
+    b.count += 1;
+    if (b.count > max) {
+      res.set('Retry-After', String(Math.ceil((b.start + windowMs - now) / 1000)));
+      return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+    }
+    next();
+  };
+}
 
 const startedAt = Date.now();
 const storage = new Storage({ dataDir: config.dataDir, archiveRoot: config.archiveRoot });
@@ -274,9 +331,20 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
+// 全局限流：/api 下每分钟每用户（或 IP）最多 300 次请求
+app.use('/api', rateLimit({ windowMs: 60_000, max: 300 }));
 
 if (config.demoMode) startDemoMode();
+
+// 写操作权限门禁：POST/PUT/DELETE/PATCH 到 settings/channels/messages 需管理员
+// （/api/inbound 等外部 webhook 不在此列，保持开放）
+const _protectedPrefix = ['/api/settings', '/api/channels', '/api/messages'];
+app.use((req, res, next) => {
+  if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return next();
+  if (!_protectedPrefix.some((p) => req.path.startsWith(p))) return next();
+  return requireAdmin(req, res, next);
+});
 
 app.use('/api/channels', createChannelsRouter({ manager, storage }));
 app.use('/api/messages', createMessagesRouter({ storage, ws }));
@@ -341,6 +409,14 @@ if (config.socketPath) {
     console.error(`清理残留 socket 失败: ${e.message}`);
   }
   fs.mkdirSync(path.dirname(config.socketPath), { recursive: true });
+  // P0-01（可选加固，用户已确认执行）：把 socket 所在目录（即应用控制目录）收为 0o700，
+  // 仅属主 clawvault 可进入。飞牛网关以 root 运行、凭 CAP_DAC_OVERRIDE 可穿透 DAC，
+  // 故不受影响；其余本地账号（含近 root 权限的 admin）/ 容器被挡，进一步收敛横向面。
+  try {
+    fs.chmodSync(path.dirname(config.socketPath), 0o700);
+  } catch (e) {
+    console.error(`设置 socket 父目录权限失败: ${e.message}`);
+  }
   server.listen(config.socketPath, () => {
     // 飞牛网关链路：浏览器 → nginx(www-data) → trim_http_cgi(以 root 运行) → 本 socket。
     // 真正连入本 socket 的对端是 root 身份的网关进程，它具备 CAP_DAC_OVERRIDE，

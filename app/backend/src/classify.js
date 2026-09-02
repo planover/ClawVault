@@ -1,4 +1,64 @@
+import dns from 'node:dns';
 import config from './config.js';
+
+// 判断 IP 是否为私网 / 回环 / 链路本地 / 保留地址（SSRF 防护用）
+function isPrivateIp(ip) {
+  if (typeof ip !== 'string') return true;
+  if (ip.includes('.')) {
+    const p = ip.split('.').map(Number);
+    if (p.length !== 4 || p.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
+    const [a, b] = p;
+    if (a === 0) return true; // 0.0.0.0/8
+    if (a === 10) return true; // 10/8
+    if (a === 127) return true; // loopback
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
+    if (a === 169 && b === 254) return true; // 链路本地 / 云元数据 169.254.169.254
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+    if (a === 192 && b === 168) return true; // 192.168/16
+    if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15
+    if (a >= 224) return true; // 组播 / 保留 / 受限广播
+    return false;
+  }
+  const v = ip.toLowerCase();
+  if (v === '::1' || v === '::' || v === '::ffff:0:0') return true;
+  if (v.startsWith('fe80')) return true; // 链路本地
+  if (v.startsWith('fc') || v.startsWith('fd')) return true; // 唯一本地地址 ULA
+  if (v.startsWith('::ffff:')) return isPrivateIp(v.slice(7)); // IPv4 映射
+  return false;
+}
+
+// SSRF 防护：校验 /settings/test 的目标主机不会解析到内网 / 回环地址。
+// 豁免：正在测试已保存的默认配置（用户自配，非任意内网探测）——这样本地自托管 AI（如 LAN Ollama）仍可测试。
+async function assertSafeTarget(baseUrl) {
+  let raw = baseUrl && /^https?:\/\//i.test(baseUrl) ? baseUrl : 'https://' + (baseUrl || 'api.anthropic.com');
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error('非法的 baseUrl');
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('仅允许 http/https 目标');
+  // 豁免已保存的默认配置（host 一致即可）
+  if (config.ai.baseUrl) {
+    try {
+      const cfg = new URL(config.ai.baseUrl);
+      if (cfg.host === u.host) return;
+    } catch {
+      /* 忽略，继续走地址检查 */
+    }
+  }
+  let addrs;
+  try {
+    addrs = await dns.lookup(u.hostname, { all: true });
+  } catch {
+    throw new Error('无法解析目标主机');
+  }
+  for (const a of addrs) {
+    if (isPrivateIp(a.address)) {
+      throw new Error('目标主机解析到内网/回环地址，出于 SSRF 防护已拒绝（若要测试本地 AI，请先将其保存为默认 baseUrl）');
+    }
+  }
+}
 
 // 运行时 AI 失败环形缓冲：供 /api/health 暴露最近失败，便于快速定位分类异常根因。
 const _recentAiFailures = [];
@@ -134,6 +194,12 @@ function parseCategory(text) {
 // 测试 AI 连接：用给定配置真实地发一次请求，返回是否可用 + 样例分类结果
 export async function testConnection({ apiKey, baseUrl, model }) {
   if (!apiKey) return { ok: false, error: '未填写 API Key' };
+  // SSRF 防护：拒绝解析到内网/回环地址的目标（已保存的默认配置除外）
+  try {
+    await assertSafeTarget(baseUrl);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
   const url = `${String(baseUrl || '').replace(/\/$/, '') || 'https://api.anthropic.com'}/v1/messages`;
   const sample = '提醒我明天上午十点跟客户开会，记得带合同。';
   const t0 = Date.now();
