@@ -163,12 +163,18 @@ test('createSnapshot：无浏览器时仍落盘 HTML 元数据，截图优雅跳
   assert.equal(rec.domain, 'example.com');
   assert.equal(rec.status, 'ok');
 
-  // 渐进增强：没装浏览器时截图被跳过，但整体不失败（screenshotPath 留空，记录跳过原因）
-  assert.equal(rec.screenshotPath, '');
-  assert.ok(
-    ['no_browser', 'no_playwright', 'capture_failed', 'disabled'].includes(rec.screenshotError),
-    `截图应优雅跳过，实际原因=${rec.screenshotError}`,
-  );
+  // 截图是渐进增强：装了浏览器就抓（screenshotPath 非空、无原因），
+  // 没装就优雅跳过（screenshotPath 留空 + 记录原因）。两种环境都不应抛异常、不影响核心资产。
+  // 关键不变量：screenshotPath 与 screenshotError 互斥（恰好一个存在）。
+  const hasShot = Boolean(rec.screenshotPath);
+  const hasReason = Boolean(rec.screenshotError);
+  assert.ok(hasShot !== hasReason, `截图与跳过原因应互斥：path=${rec.screenshotPath} reason=${rec.screenshotError}`);
+  if (!hasShot) {
+    assert.ok(
+      ['no_browser', 'no_playwright', 'capture_failed', 'disabled'].includes(rec.screenshotError),
+      `跳过截图应给出明确原因，实际=${rec.screenshotError}`,
+    );
+  }
   // 清理
   fs.rmSync(archiveRoot, { recursive: true, force: true });
 });
