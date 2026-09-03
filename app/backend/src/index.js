@@ -337,7 +337,9 @@ app.use((req, res, next) => {
 const _gatewayExempt = ['/api/health', '/api/about', '/api/inbound'];
 app.use('/api', (req, res, next) => {
   if (!config.gatewayPrefix) return next(); // 开发 / 直连模式放行
-  if (_gatewayExempt.some((p) => req.path.startsWith(p))) return next();
+  // 注意：app.use('/api') 挂载下 req.path 不含 /api 前缀，需用 baseUrl+path 还原完整路径
+  const full = req.baseUrl + req.path;
+  if (_gatewayExempt.some((p) => full.startsWith(p))) return next();
   if (req.fnUser) return next();
   return res.status(401).json({ error: '未携带网关身份，拒绝访问' });
 });
