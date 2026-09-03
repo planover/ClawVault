@@ -50,6 +50,10 @@ const DEFAULTS = {
     // 截图开关。需要 Chromium（opt-in）：检测不到浏览器时会自动跳过，
     // 元数据卡片与 HTML 全文归档不受影响。
     screenshot: true,
+    // 出网代理（可选）：fnOS 应用沙箱本地无出站 DNS，配置受信代理后网页快照/截图
+    // 经由代理出网（DNS 由代理侧解析），真机联网后即可正常抓取。
+    // 也可通过环境变量 LINKS_PROXY / HTTPS_PROXY / HTTP_PROXY 指定。
+    proxy: env('LINKS_PROXY', ''),
   },
   demo_mode: false,
 };

@@ -99,6 +99,11 @@ export const api = {
   linkHtmlUrl: (id) => apiUrl(`/api/links/${id}/html`),
   linkCoverUrl: (id) => apiUrl(`/api/links/${id}/cover`),
   linkScreenshotUrl: (id) => apiUrl(`/api/links/${id}/screenshot`),
+  // 手动重新抓取某条网址快照（更新同一行，status/error 透传）
+  refetchLink: (id) =>
+    getJson(`/api/links/${id}/refetch`, {
+      method: 'POST',
+    }),
   // Office（docx/xlsx）转 HTML 后的内嵌预览地址
   mediaPreviewUrl: (id) => apiUrl(`/api/media/preview/${id}`),
   // 压缩包内文件列表（zip/tar/tgz）

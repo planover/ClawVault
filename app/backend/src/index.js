@@ -403,7 +403,7 @@ app.use('/api/chats', createChatsRouter({ storage }));
 app.use('/api/voice', createVoiceRouter({ storage }));
 app.use('/api/media', createMediaRouter({ storage }));
 app.use('/api/about', createAboutRouter({ storage }));
-app.use('/api/links', createLinksRouter({ storage }));
+app.use('/api/links', createLinksRouter({ storage, ws }));
 app.use('/api/health', createHealthRouter({ storage, manager, config, startedAt }));
 
 // 已注册的 bot 接入类型（前端"添加通道"表单据此渲染）

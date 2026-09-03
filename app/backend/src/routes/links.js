@@ -2,7 +2,7 @@ import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveWithin } from '../safepath.js';
-import { LINK_CATEGORY } from '../linkshot.js';
+import { LINK_CATEGORY, createSnapshot } from '../linkshot.js';
 
 // 网址快照 API：
 //   GET /api/links            收藏网址列表（支持 q / limit / offset）
@@ -10,6 +10,7 @@ import { LINK_CATEGORY } from '../linkshot.js';
 //   GET /api/links/:id/html   HTML 全文归档（CSP 锁死脚本后同域提供）
 //   GET /api/links/:id/cover      封面图
 //   GET /api/links/:id/screenshot 网页截图
+//   POST /api/links/:id/refetch   重新抓取（更新同一行，广播刷新）
 //
 // 安全要点：归档的 HTML 来自任意外部站点，直接在应用同源下打开等于给第三方网页
 // 一个同源执行入口（可读 /api/*、可操作归档）。因此一律加 CSP 禁掉脚本与外联，
@@ -25,7 +26,7 @@ const COVER_MIME = {
   webp: 'image/webp',
 };
 
-export default function createLinksRouter({ storage } = {}) {
+export default function createLinksRouter({ storage, ws } = {}) {
   const r = Router();
 
   r.get('/', (req, res) => {
@@ -84,6 +85,24 @@ export default function createLinksRouter({ storage } = {}) {
   );
 
   r.get('/:id/screenshot', sendField('screenshot_path', () => 'image/png'));
+
+  // 手动「重新抓取」：用已存记录里的 url 重新抓一次（url 来自库，且会再次过 SSRF 校验，
+  // 不能被用于抓取任意新地址）。更新同一行并广播，前端详情面板就地刷新。
+  // 走网关身份鉴权（生产态无网关头即 401）；不要求管理员——只是重抓已归档的链接。
+  r.post('/:id/refetch', async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });
+    const existing = storage.getLinkSnapshot(id);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    try {
+      const snap = await createSnapshot(existing.url, { archiveRoot: storage.archiveRoot });
+      const updated = storage.updateLinkSnapshot({ ...snap, id: existing.id, messageId: existing.message_id });
+      if (ws) ws.broadcast({ type: 'link_snapshot', record: { messageId: existing.message_id, snapshot: updated } });
+      res.json(updated);
+    } catch (e) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
+    }
+  });
 
   return r;
 }

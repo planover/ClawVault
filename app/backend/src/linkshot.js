@@ -3,6 +3,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import config from './config.js';
 import { assertPublicUrl } from './ssrf.js';
+// undici 仅用于「走代理出网」场景：其 ProxyAgent 作为 fetch 的 dispatcher，
+// 让沙箱内无本地 DNS 的应用也能经受信代理抓取网页（DNS 由代理侧解析）。
+// 未配置代理时仍走全局 fetch，行为与之前完全一致，测试桩也不受影响。
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 
 // 网址快照引擎：消息里出现 http(s) 链接时，把网页存成三份资产——
 //   1) 元数据卡片：标题 / 摘要 / 站点名 / 封面图（秒级可用，零外部依赖）
@@ -25,6 +29,46 @@ export const SNAPSHOT_ROOT = '链接快照';
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
   'Chrome/120.0 Safari/537.36 ClawVaultBot/1.0';
+
+// ---------------------------------------------------------------- 代理出网
+// fnOS 应用沙箱本地无出站 DNS，导致直连 dns.lookup 失败、网页抓不到。
+// 用户配置一个受信出网代理（HTTPS_PROXY/HTTP_PROXY，或 settings 里的 links.proxy）
+// 后，fetch 经由该代理出网（DNS 由代理侧解析），即可在真机联网后正常抓取。
+// 优先级：settings(links.proxy) > HTTPS_PROXY > HTTP_PROXY。
+function resolveProxy() {
+  const p =
+    config.links?.proxy ||
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy ||
+    '';
+  return p || null;
+}
+
+let _proxyAgent = null;
+let _proxyAgentUrl = null;
+function proxyDispatcher() {
+  const url = resolveProxy();
+  if (!url) return null;
+  if (!_proxyAgent || _proxyAgentUrl !== url) {
+    try {
+      _proxyAgent = new ProxyAgent(url);
+      _proxyAgentUrl = url;
+    } catch (e) {
+      console.error('[ClawVault] 代理初始化失败，回退直连:', e?.message || e);
+      return null;
+    }
+  }
+  return _proxyAgent;
+}
+
+// 统一出口：配了代理用 undiciFetch + dispatcher；否则全局 fetch（测试桩兼容）。
+function doFetch(url, opts = {}) {
+  const dispatcher = proxyDispatcher();
+  if (dispatcher) return undiciFetch(url, { ...opts, dispatcher });
+  return fetch(url, opts);
+}
 
 // ---------------------------------------------------------------- URL 提取
 
@@ -226,13 +270,14 @@ async function readCapped(res, maxBytes) {
 export async function fetchPage(url, { timeoutMs, maxBytes, maxRedirects = 5 } = {}) {
   const tmo = timeoutMs ?? config.links?.timeoutMs ?? 15000;
   const cap = maxBytes ?? config.links?.maxBytes ?? 2 * 1024 * 1024;
+  const proxy = resolveProxy();
   let current = url;
   for (let hop = 0; hop <= maxRedirects; hop++) {
-    const safe = await assertPublicUrl(current); // 逐跳复检
+    const safe = await assertPublicUrl(current, { proxy }); // 逐跳复检（走代理时跳过本地 DNS）
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), tmo);
     try {
-      const res = await fetch(safe.href, {
+      const res = await doFetch(safe.href, {
         redirect: 'manual',
         signal: ctrl.signal,
         headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml,*/*;q=0.8' },
@@ -256,11 +301,11 @@ export async function fetchPage(url, { timeoutMs, maxBytes, maxRedirects = 5 } =
 export async function fetchImage(url, { timeoutMs, maxBytes } = {}) {
   const tmo = timeoutMs ?? config.links?.timeoutMs ?? 15000;
   const cap = maxBytes ?? 2 * 1024 * 1024;
-  const safe = await assertPublicUrl(url);
+  const safe = await assertPublicUrl(url, { proxy: resolveProxy() });
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), tmo);
   try {
-    const res = await fetch(safe.href, {
+    const res = await doFetch(safe.href, {
       redirect: 'manual',
       signal: ctrl.signal,
       headers: { 'user-agent': UA, accept: 'image/*' },
@@ -370,13 +415,17 @@ export async function captureScreenshot(url, absOutPath, { timeoutMs } = {}) {
   if (!pw) return { ok: false, reason: 'no_playwright' };
 
   const tmo = timeoutMs ?? config.links?.timeoutMs ?? 15000;
+  const proxy = resolveProxy();
   let browser;
   try {
     // 快照只是一次性渲染，不需要持久化上下文；--no-sandbox 是容器内/非 root 运行的常见要求
-    browser = await pw.chromium.launch({
+    const launchOpts = {
       executablePath: exe,
       args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-    });
+    };
+    // 走代理出网时，截图也经由同一代理，才能抓到联网后的页面
+    if (proxy) launchOpts.proxy = { server: proxy };
+    browser = await pw.chromium.launch(launchOpts);
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: tmo });
     // 给懒加载/字体一点时间，但不无限等（超时不致命，仍截当前画面）

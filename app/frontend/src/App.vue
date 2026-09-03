@@ -23,6 +23,7 @@ const filter = reactive({ channelName: '', category: '', sub: '', kind: '', q: '
 const selectedId = ref(null);
 const selectedMessage = ref(null);
 const linkSnapshots = ref([]); // 选中消息关联的「收藏网址」快照
+const refetchingId = ref(null); // 正在重新抓取的快照 id（同一个时刻只允许一个，避免并发压测外部站点）
 const showChannels = ref(false);
 const showSettings = ref(false);
 const showAbout = ref(false);
@@ -267,6 +268,31 @@ async function loadLinkSnapshots(messageId) {
   }
 }
 
+// 手动「重新抓取」：真机联网前抓取会失败，联网（或配好代理）后点这个按钮即可补抓。
+// 后端用同一 id 更新行并广播，这里本地也直接替换该快照，保证即时反馈。
+async function refetchLink(id) {
+  if (refetchingId.value) return;
+  refetchingId.value = id;
+  try {
+    const updated = await api.refetchLink(id);
+    const idx = linkSnapshots.value.findIndex((s) => s.id === id);
+    if (idx >= 0) {
+      const arr = linkSnapshots.value.slice();
+      arr[idx] = updated;
+      linkSnapshots.value = arr;
+    }
+    if (updated.status === 'fetch_failed') {
+      toast.warning('重新抓取仍失败：' + (updated.error || '未知错误'));
+    } else {
+      toast.success('已重新抓取');
+    }
+  } catch (e) {
+    toast.error('重新抓取失败：' + (e.message || e));
+  } finally {
+    refetchingId.value = null;
+  }
+}
+
 // 图片灯箱：从列表或详情打开，统一用「当前筛选下的图片 id 序列」便于左右切换
 function onOpenLightbox({ ids, index }) {
   lightbox.ids = ids && ids.length ? ids : [];
@@ -355,10 +381,18 @@ function onWSEvent(e) {
     loadFolders();
   } else if (e.type === 'link_snapshot') {
     // 抓取是异步的：消息已入库，几秒后快照才落库并通过 WS 推来。
-    // 仅当正看着对应消息时实时追加，避免无关的快照刷新整个列表。
+    // 仅当正看着对应消息时处理，避免无关的快照刷新整个列表。
+    // 同 id 视为「重新抓取」的就地更新；新 id 则追加。
     if (selectedMessage.value && e.record?.messageId === selectedMessage.value.id && e.record?.snapshot) {
-      const exists = linkSnapshots.value.some((s) => s.id === e.record.snapshot.id);
-      if (!exists) linkSnapshots.value = [...linkSnapshots.value, e.record.snapshot];
+      const snap = e.record.snapshot;
+      const idx = linkSnapshots.value.findIndex((s) => s.id === snap.id);
+      if (idx >= 0) {
+        const arr = linkSnapshots.value.slice();
+        arr[idx] = snap;
+        linkSnapshots.value = arr;
+      } else {
+        linkSnapshots.value = [...linkSnapshots.value, snap];
+      }
     }
   } else if (e.type === 'channels') {
     channels.value = e.channels;
@@ -614,13 +648,25 @@ watch(selectedMessage, (v) => {
                 <a class="snap-title" :href="api.linkHtmlUrl(s.id)" target="_blank" rel="noopener">{{ s.title || s.url }}</a>
                 <span class="snap-domain">{{ s.domain || s.url }}</span>
               </div>
+              <div v-if="s.status === 'fetch_failed'" class="snap-fail">
+                <Icon name="alert" :size="15" />
+                <div class="snap-fail-body">
+                  <strong>抓取失败</strong>
+                  <span class="snap-fail-msg">{{ s.error || '未能获取该网页，真机可能尚未联网或被代理/防火墙拦截。联网后再点「重新抓取」。' }}</span>
+                </div>
+              </div>
               <img v-if="s.cover_path" class="snap-cover" :src="api.linkCoverUrl(s.id)" alt="封面" loading="lazy" decoding="async" />
               <p v-if="s.description" class="snap-desc">{{ s.description }}</p>
               <img v-if="s.screenshot_path" class="snap-shot" :src="api.linkScreenshotUrl(s.id)" alt="网页截图" loading="lazy" decoding="async" />
-              <div v-else class="snap-noshot"><Icon name="image" :size="13" /> 截图不可用（未安装浏览器）</div>
+              <div v-else-if="s.status !== 'fetch_failed'" class="snap-noshot"><Icon name="image" :size="13" /> 截图不可用（未安装浏览器）</div>
               <div class="snap-actions">
                 <a class="btn ghost sm" :href="api.linkHtmlUrl(s.id)" target="_blank" rel="noopener"><Icon name="external" :size="13" /> 查看归档</a>
                 <a class="btn ghost sm" :href="s.url" target="_blank" rel="noopener"><Icon name="arrowRight" :size="13" /> 打开原网址</a>
+                <button class="btn ghost sm" :disabled="refetchingId === s.id" @click="refetchLink(s.id)">
+                  <Icon name="refresh" :size="13" />
+                  <span v-if="refetchingId === s.id" class="spinner-sm"></span>
+                  {{ refetchingId === s.id ? '抓取中…' : '重新抓取' }}
+                </button>
               </div>
             </div>
           </div>
@@ -1164,6 +1210,52 @@ watch(selectedMessage, (v) => {
   background: var(--c-surface-3);
   color: var(--c-faint);
   font-size: 11.5px;
+}
+/* 抓取失败：红色高亮横幅，明确告知原因与下一步动作 */
+.snap-fail {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  background: var(--c-danger-bg, var(--c-warn-bg));
+  color: var(--c-danger, var(--c-warn));
+  border: 1px solid var(--c-danger-border, color-mix(in srgb, var(--c-danger, var(--c-warn)) 35%, transparent));
+  font-size: 12px;
+  line-height: 1.5;
+}
+.snap-fail :deep(svg),
+.snap-fail > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.snap-fail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.snap-fail-body strong {
+  font-weight: 600;
+}
+.snap-fail-msg {
+  color: var(--c-text-2);
+  overflow-wrap: anywhere;
+}
+/* 重新抓取进行中的小转圈 */
+.spinner-sm {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: cv-spin 0.7s linear infinite;
+}
+@keyframes cv-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .snap-actions {
   display: flex;

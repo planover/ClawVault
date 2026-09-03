@@ -894,6 +894,34 @@ export class Storage {
     return this._stmt('SELECT * FROM link_snapshots WHERE id=?').get(id) || null;
   }
 
+  // 重新抓取后更新已存在的快照行（按 id 原地更新，不新增行）。
+  // rec 由 linkshot.createSnapshot 产出；id / messageId 由调用方补全，
+  // 保证「重新抓取」按钮在 UI 里就地刷新同一条快照。
+  updateLinkSnapshot(rec) {
+    const info = {
+      id: rec.id,
+      final_url: rec.finalUrl || rec.url || '',
+      title: rec.title || '',
+      description: rec.description || '',
+      site_name: rec.siteName || '',
+      domain: rec.domain || '',
+      html_path: rec.htmlPath || '',
+      cover_path: rec.coverPath || '',
+      screenshot_path: rec.screenshotPath || '',
+      status: rec.status || 'ok',
+      error: rec.error || '',
+      created_at: rec.createdAt || Date.now(),
+    };
+    this._stmt(
+      `UPDATE link_snapshots SET
+         final_url=@final_url, title=@title, description=@description, site_name=@site_name,
+         domain=@domain, html_path=@html_path, cover_path=@cover_path, screenshot_path=@screenshot_path,
+         status=@status, error=@error, created_at=@created_at
+       WHERE id=@id`,
+    ).run(info);
+    return this.getLinkSnapshot(rec.id);
+  }
+
   // 「收藏网址」列表：按时间倒序，可按标题/摘要/域名/URL 关键词搜索。
   // 搜索沿用 escapeLike 转义 % _ \，否则搜「100%」会退化成全表匹配。
   listLinkSnapshots({ q = '', limit = 50, offset = 0 } = {}) {

@@ -16,6 +16,12 @@ import {
 } from '../src/linkshot.js';
 import { assertPublicUrl, isPrivateIp } from '../src/ssrf.js';
 
+// 清除环境里可能存在的代理（沙箱/CI 常注入 HTTPS_PROXY），保证单测走直连 + 桩 fetch，
+// 不被意外代理劫持（生产态仍按 LINKS_PROXY / HTTPS_PROXY 出网）。
+for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'LINKS_PROXY']) {
+  delete process.env[k];
+}
+
 // ---------------------------------------------------------------- URL 提取
 test('extractUrls：空文本返回空数组', () => {
   assert.deepEqual(extractUrls(''), []);
