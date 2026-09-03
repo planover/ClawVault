@@ -5,6 +5,7 @@ export class WSBroadcaster {
   constructor() {
     this.wss = null;
     this.clients = new Set();
+    this.requireGatewayAuth = false; // 生产态置 true：WebSocket 升级也须携带网关注入身份头
   }
 
   // wsPath：WebSocket 挂载路径。飞牛统一网关模式下必须带网关前缀
@@ -13,6 +14,11 @@ export class WSBroadcaster {
   attach(server, wsPath = '/ws') {
     this.wss = new WebSocketServer({ server, path: wsPath || '/ws' });
     this.wss.on('connection', (ws, req) => {
+      // 纵深防御（OPS-P0-02）：生产态要求升级请求携带网关注入身份头，直连 socket 无头则断开
+      if (this.requireGatewayAuth && !req?.headers?.['x-trim-userid']) {
+        ws.terminate();
+        return;
+      }
       // 网关在建立连接时同样注入身份 Header，按官方要求把连接绑定到 uid
       ws.fnUid = req?.headers?.['x-trim-userid'] ? String(req.headers['x-trim-userid']) : null;
       this.clients.add(ws);

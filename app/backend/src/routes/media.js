@@ -299,7 +299,7 @@ export default function createMediaRouter({ storage }) {
       res.set('Cache-Control', 'public, max-age=300');
       res.set(
         'Content-Security-Policy',
-        "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src 'unsafe-inline'",
+        "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src 'unsafe-inline'; frame-ancestors 'self'",
       );
       res.set('X-Content-Type-Options', 'nosniff');
       return res.send(html);

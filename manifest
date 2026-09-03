@@ -1,5 +1,5 @@
 appname=clawvault
-version=1.0.35
+version=1.0.36
 display_name="ClawVault（爪匣）"
 desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
@@ -22,7 +22,7 @@ checkport=false
 desktop_uidir=
 desktop_applaunchname="clawvault.Application"
 disable_authorization_path=false
-changelog="""1.0.35：依赖安全更新（npm audit 收口）。①tar 从生产依赖移入 devDependencies 并升 7.5.22（仅测试使用，npm ci --omit=dev 不进 fpk，关闭 CRITICAL 路径穿越告警）。②图片处理库 jimp 升 1.6.1（修复 moderate 告警，@jimp/core 与 file-type 随传递修复）；jimp 1.x 为 ESM 且移除 Jimp.AUTO / Jimp.MIME_* / getBufferAsync 旧 API，重写 /api/media/thumb 缩略图（命名导入 + scale(factor) 等比缩放 + getBuffer 字符串 MIME），保留原图回退。③exceljs/uuid（moderate，需上游修复、xlsx 写路径不触发 uuid 漏洞）维持监控。
+changelog="""1.0.36：安全收口（全部开口项闭环）。①OPS-P0-02 纵深防御：生产态所有 /api 读请求（除 /api/health、/api/about、/api/inbound）须携网关注入身份头，直连 socket 无头返回 401；WebSocket 升级同策。②OPS-P1-02 程序目录固化只读（INNER backend/ui/runtime 改 root 属主、clawvault 仅 r-x，socket 仍建于 INNER 目录）。③OPS-P3-02 补 config/wizard 目录遍历位。④OPS-P2-01 .clvkey 写后显式 chmod 600 双重保险。⑤OPS-P2-04 部署清理旧版可能含 aes_key 的调试日志残留（新版代码已 redactSecrets + 600）。⑥Office 预览 CSP 加 frame-ancestors 'self'。⑦OPS-P2-03（api-scope 由 fnOS 按调用授权，应用层无法收窄）、OPS-P1-01（v1.0.34 已改 fallback 至 @appshare，新装不再生成旧 @appdata，实质闭环）、exceljs/uuid moderate（fixAvailable=None，xlsx 写路径不触发 uuid 漏洞）维持监控。1.0.35：依赖安全更新（npm audit 收口）。①tar 从生产依赖移入 devDependencies 并升 7.5.22（仅测试使用，npm ci --omit=dev 不进 fpk，关闭 CRITICAL 路径穿越告警）。②图片处理库 jimp 升 1.6.1（修复 moderate 告警，@jimp/core 与 file-type 随传递修复）；jimp 1.x 为 ESM 且移除 Jimp.AUTO / Jimp.MIME_* / getBufferAsync 旧 API，重写 /api/media/thumb 缩略图（命名导入 + scale(factor) 等比缩放 + getBuffer 字符串 MIME），保留原图回退。③exceljs/uuid（moderate，需上游修复、xlsx 写路径不触发 uuid 漏洞）维持监控。
 1.0.34：安全整改收口。WEB-P1-01 权限分级（ownerUserId 认领 + requireAdmin 守卫写操作）、WEB-P1-03 SSRF（DNS 解析拒私网/回环/链路本地）、OPS-P1 属主收紧（代码目录 chmod go-w）、SUP-P1-03/04（mammoth ^1.12.2 / adm-zip ^0.6.0）、SUP-P2-02（GitHub Actions 全量 pin commit SHA）、低危（限流 300/min、Office 预览 HTML 清洗 + CSP、/api/health 去版本号泄露、WAL checkpoint、main.log 轮转）、P0-01（socket 父目录收 0o700）。
 1.0.33：修复 v1.0.32 安装后「本地应用启动失败」——cmd/main 旧数据目录清理逻辑误在 log() 函数定义前被调用（配合 set -e 以退出码 127 退出，飞牛判启动失败）；已将清理逻辑移至 die() 定义之后，恢复正常启动。其余沿用 v1.0.32 功能修复与安全复审收口。
 1.0.30：文件访问回执阻断修复 + 重新分类交互 + iOS 27 主题打磨。①文件访问回执修复：定位到 `contentDisposition()` 在中文文件名上把原始 UTF-8 字节写进 legacy `filename="..."`，触发 Node `setHeader` 的 `ERR_INVALID_CHAR` 整条响应被阻断（不只是 header 本身），导致 PDF/文件既无法下载也无法内嵌预览——**这同时也是聊天归档 xlsx 无法下载的根因**。按 RFC 6266 修复：legacy 字段仅在纯 ASCII 时发出，否则只走 `filename*=UTF-8''`（现代浏览器全支持）。同时 `routes/chats.js` 显式构造 ASCII legacy + RFC 5987 `filename*`，并把「归档不存在」从 404 升级为带说明的 JSON（区分"没消息"和"服务器出错"）。已加中文文件名回归测试。②重新分类交互升级：原来的 `<input list="...">` 改成原生 `<select>`，列出所有已有分类 + 一个「＋ 新建分类…」选项，选中后弹出新分类输入框；子分类用 datalist 给出该主分类下已有子分类的候选。已选过「新建」并保存后，新分类会进入下拉，闭环。③iOS 27 主题继续打磨（Liquid Glass 2.0）：更大模糊（blur 36 / saturate 200%）、多层高光（顶部光带 + 135° 斜向折射 + 0.5px 边缘亮环 = 菲涅尔反射感）、body 底层 5 个柔和色斑缓慢漂移让光透过面板形成动态折射、弹层与消息卡全部用同一套玻璃规则（设置/通道/关于/文件预览头/新增通道卡都变玻璃）。④其余 4 项（语音播放/聊天归档 xlsx 端到端/消息回执/飞牛 Office 文档接入）需要 NAS 实机日志（语音转码结果、回执 send 状态、fnOS 应用的 deep-link 协议）才能继续修——下一版（1.0.31）会一次性补齐，详见设置里的"消息回执"开关。

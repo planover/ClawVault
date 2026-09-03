@@ -45,6 +45,7 @@ export function loadKey(dataDir) {
     const k = crypto.randomBytes(32);
     fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(keyPath, k.toString('hex'), { mode: 0o600 });
+    fs.chmodSync(keyPath, 0o600); // 双重保险：确保主密钥仅属主可读（OPS-P2-01）
     return k;
   }
 }

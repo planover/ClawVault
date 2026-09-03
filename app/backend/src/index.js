@@ -331,6 +331,17 @@ app.use((req, res, next) => {
   next();
 });
 
+// 纵深防御（OPS-P0-02）：生产态（gatewayPrefix 已配置）要求所有 /api 请求携带网关注入身份头，
+// 直连 Unix Socket（无网关头）视为未授权，返回 401。网关注入头对登录用户恒存在；
+// 例外：/api/health（fnOS 存活探针）、/api/about（品牌页，无敏感数据）、/api/inbound（外部 webhook 开放）。
+const _gatewayExempt = ['/api/health', '/api/about', '/api/inbound'];
+app.use('/api', (req, res, next) => {
+  if (!config.gatewayPrefix) return next(); // 开发 / 直连模式放行
+  if (_gatewayExempt.some((p) => req.path.startsWith(p))) return next();
+  if (req.fnUser) return next();
+  return res.status(401).json({ error: '未携带网关身份，拒绝访问' });
+});
+
 app.use(express.json({ limit: '2mb' }));
 // 全局限流：/api 下每分钟每用户（或 IP）最多 300 次请求
 app.use('/api', rateLimit({ windowMs: 60_000, max: 300 }));
@@ -387,6 +398,8 @@ const server = http.createServer(app);
 
 // WebSocket 升级请求不经过 express 中间件，req.url 仍带网关前缀，
 // 因此这里要用「前缀 + /ws」注册，与前端连接地址保持一致。
+// 生产态要求 WebSocket 升级也携带网关身份头（纵深防御 OPS-P0-02）
+ws.requireGatewayAuth = !!config.gatewayPrefix;
 ws.attach(server, `${config.gatewayPrefix}/ws`);
 
 // 是否已成功进入监听态（用于区分启动期 / 运行期异常）
