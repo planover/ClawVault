@@ -93,6 +93,12 @@ export const api = {
   // inline=true 时带 ?inline=1，让后端用 Content-Disposition: inline（PDF 等可内嵌预览）；
   // 不带则为 attachment（触发下载）。
   mediaUrl: (id, opts = {}) => apiUrl(`/api/media/${id}${opts.inline ? '?inline=1' : ''}`),
+  // 收藏网址：按消息维度取快照列表（详情面板用）
+  messageLinks: (messageId) => getJson(`/api/links?messageId=${messageId}`),
+  // 快照对外资源地址（CSP 锁定的 HTML 归档 / 封面 / 截图），必须自带网关前缀
+  linkHtmlUrl: (id) => apiUrl(`/api/links/${id}/html`),
+  linkCoverUrl: (id) => apiUrl(`/api/links/${id}/cover`),
+  linkScreenshotUrl: (id) => apiUrl(`/api/links/${id}/screenshot`),
   // Office（docx/xlsx）转 HTML 后的内嵌预览地址
   mediaPreviewUrl: (id) => apiUrl(`/api/media/preview/${id}`),
   // 压缩包内文件列表（zip/tar/tgz）

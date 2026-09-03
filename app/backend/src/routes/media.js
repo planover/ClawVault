@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveWithin } from '../safepath.js';
 
 const MIME = {
   png: 'image/png',
@@ -148,23 +149,12 @@ export default function createMediaRouter({ storage }) {
   function resolveMedia(id) {
     const m = storage.getMessage(parseInt(id, 10));
     if (!m || !m.media) return null;
-    const root = path.resolve(storage.archiveRoot);
-    const abs = path.resolve(root, m.media);
-    // 词法越界（含 ../ 逃逸）先判，不依赖文件存在 → 稳定返回 403 便于排障
-    if (abs !== root && !abs.startsWith(root + path.sep)) return { traversal: true };
-    // 符号链接逃逸：解析真实路径后必须仍在媒体根内（词法合法但 symlink 指到根外即拦截）。
-    // root 或文件尚不存在时退化为词法校验（已通过上方），不误伤空安装/首次归档。
-    let realRoot = root;
-    let real = abs;
-    try {
-      realRoot = fs.realpathSync(root);
-      real = fs.realpathSync(abs);
-    } catch {
-      /* 退化为词法校验 */
-    }
-    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return { traversal: true };
-    if (!fs.existsSync(real)) return null;
-    return { m, abs: real };
+    // 越界校验（词法 + symlink 双重）统一走 safepath.resolveWithin，
+    // 与链接快照共用一份实现，避免两套规则各自漂移。
+    const resolved = resolveWithin(storage.archiveRoot, m.media);
+    if (resolved && resolved.traversal) return { traversal: true };
+    if (!resolved) return null;
+    return { m, abs: resolved.abs };
   }
 
   // 统一消费 resolveMedia 的三种结果：越界 403 / 缺失 404 / 正常则交给 handler

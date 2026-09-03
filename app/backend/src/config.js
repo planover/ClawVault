@@ -38,6 +38,19 @@ const DEFAULTS = {
     // 导致几乎每条消息各发一封、且每封都只报 1 条。
     receipt_idle_ms: 45000,
   },
+  // 网址快照：消息里出现 http(s) 链接时自动归档该网页
+  links: {
+    enabled: true,
+    // 单条消息最多抓几个链接（防止一段文本贴 20 个链接把归档打爆）
+    maxUrlsPerMessage: 3,
+    // 抓取与截图的超时（毫秒）
+    timeoutMs: 15000,
+    // 单页 HTML / 单张封面图的体积上限（字节），防异常大页面吃满内存
+    maxBytes: 2 * 1024 * 1024,
+    // 截图开关。需要 Chromium（opt-in）：检测不到浏览器时会自动跳过，
+    // 元数据卡片与 HTML 全文归档不受影响。
+    screenshot: true,
+  },
   demo_mode: false,
 };
 
@@ -71,6 +84,16 @@ export const config = {
   },
   classification: DEFAULTS.classification,
   ingest: DEFAULTS.ingest,
+  links: {
+    enabled: env('LINKS_ENABLED', String(DEFAULTS.links.enabled)) !== 'false',
+    maxUrlsPerMessage: parseInt(env('LINKS_MAX_URLS', DEFAULTS.links.maxUrlsPerMessage), 10),
+    timeoutMs: parseInt(env('LINKS_TIMEOUT_MS', DEFAULTS.links.timeoutMs), 10),
+    maxBytes: parseInt(env('LINKS_MAX_BYTES', DEFAULTS.links.maxBytes), 10),
+    screenshot: env('LINKS_SCREENSHOT', String(DEFAULTS.links.screenshot)) !== 'false',
+    // Chromium 可执行文件路径（opt-in）。留空则自动探测常见路径，
+    // 探测不到就跳过截图。也可用环境变量 CLAWVAULT_CHROMIUM 指定。
+    chromiumPath: env('CHROMIUM_PATH', ''),
+  },
   demoMode: env('DEMO_MODE', String(DEFAULTS.demo_mode)) === 'true',
 };
 

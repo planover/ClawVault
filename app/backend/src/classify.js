@@ -1,31 +1,6 @@
 import dns from 'node:dns';
 import config from './config.js';
-
-// 判断 IP 是否为私网 / 回环 / 链路本地 / 保留地址（SSRF 防护用）
-function isPrivateIp(ip) {
-  if (typeof ip !== 'string') return true;
-  if (ip.includes('.')) {
-    const p = ip.split('.').map(Number);
-    if (p.length !== 4 || p.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
-    const [a, b] = p;
-    if (a === 0) return true; // 0.0.0.0/8
-    if (a === 10) return true; // 10/8
-    if (a === 127) return true; // loopback
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
-    if (a === 169 && b === 254) return true; // 链路本地 / 云元数据 169.254.169.254
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
-    if (a === 192 && b === 168) return true; // 192.168/16
-    if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15
-    if (a >= 224) return true; // 组播 / 保留 / 受限广播
-    return false;
-  }
-  const v = ip.toLowerCase();
-  if (v === '::1' || v === '::' || v === '::ffff:0:0') return true;
-  if (v.startsWith('fe80')) return true; // 链路本地
-  if (v.startsWith('fc') || v.startsWith('fd')) return true; // 唯一本地地址 ULA
-  if (v.startsWith('::ffff:')) return isPrivateIp(v.slice(7)); // IPv4 映射
-  return false;
-}
+import { isPrivateIp } from './ssrf.js';
 
 // SSRF 防护：校验 /settings/test 的目标主机不会解析到内网 / 回环地址。
 // 豁免：正在测试已保存的默认配置（用户自配，非任意内网探测）——这样本地自托管 AI（如 LAN Ollama）仍可测试。

@@ -80,6 +80,29 @@ export class Storage {
         channel_name TEXT NOT NULL
       );
     `);
+    // 网址快照表：消息里出现的 http(s) 链接被归档为「元数据卡片 + HTML 全文 + 截图」。
+    // 一条消息可能含多个链接，故与 messages 是一对多。
+    // status: ok（全部就绪）/ ok（部分成功，看各 path 是否为空）/ fetch_failed（连网页都没抓到）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS link_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER,
+        url TEXT NOT NULL,
+        final_url TEXT,
+        title TEXT,
+        description TEXT,
+        site_name TEXT,
+        domain TEXT,
+        html_path TEXT,
+        cover_path TEXT,
+        screenshot_path TEXT,
+        status TEXT,
+        error TEXT,
+        created_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_link_msg ON link_snapshots(message_id);
+      CREATE INDEX IF NOT EXISTS idx_link_created ON link_snapshots(created_at);
+    `);
     // 兼容旧库：补齐 kind / voice / media / filename 列
     for (const col of ['kind', 'voice', 'media', 'filename']) {
       try {
@@ -832,5 +855,78 @@ export class Storage {
       .get(...mediaKinds).c;
     const stored = this._stmt("SELECT COUNT(*) AS c FROM messages WHERE media IS NOT NULL AND media != ''").get().c;
     return { total, byKind, byCategory, mediaGaps: gaps, mediaStored: stored };
+  }
+
+  // ---- 网址快照（消息里的链接被归档为 元数据卡片 + HTML 全文 + 截图）----
+
+  // 保存一条链接快照。rec 由 linkshot.createSnapshot 产出，这里补齐 messageId 落库。
+  saveLinkSnapshot(rec) {
+    const info = {
+      message_id: rec.messageId ?? null,
+      url: rec.url || '',
+      final_url: rec.finalUrl || rec.url || '',
+      title: rec.title || '',
+      description: rec.description || '',
+      site_name: rec.siteName || '',
+      domain: rec.domain || '',
+      html_path: rec.htmlPath || '',
+      cover_path: rec.coverPath || '',
+      screenshot_path: rec.screenshotPath || '',
+      status: rec.status || 'ok',
+      error: rec.error || '',
+      created_at: rec.createdAt || Date.now(),
+    };
+    const r = this._stmt(
+      `INSERT INTO link_snapshots
+       (message_id, url, final_url, title, description, site_name, domain, html_path, cover_path, screenshot_path, status, error, created_at)
+       VALUES
+       (@message_id, @url, @final_url, @title, @description, @site_name, @domain, @html_path, @cover_path, @screenshot_path, @status, @error, @created_at)`,
+    ).run(info);
+    return { id: Number(r.lastInsertRowid), ...info };
+  }
+
+  // 某条消息关联的全部快照（一条消息可含多个链接）
+  getLinkSnapshots(messageId) {
+    return this._stmt('SELECT * FROM link_snapshots WHERE message_id=? ORDER BY id').all(messageId);
+  }
+
+  getLinkSnapshot(id) {
+    return this._stmt('SELECT * FROM link_snapshots WHERE id=?').get(id) || null;
+  }
+
+  // 「收藏网址」列表：按时间倒序，可按标题/摘要/域名/URL 关键词搜索。
+  // 搜索沿用 escapeLike 转义 % _ \，否则搜「100%」会退化成全表匹配。
+  listLinkSnapshots({ q = '', limit = 50, offset = 0 } = {}) {
+    const kw = String(q || '').trim();
+    const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+    const off = Math.max(parseInt(offset, 10) || 0, 0);
+    if (kw) {
+      const like = `%${escapeLike(kw)}%`;
+      const items = this._stmt(
+        `SELECT * FROM link_snapshots
+         WHERE title LIKE @like ESCAPE '\\'
+            OR description LIKE @like ESCAPE '\\'
+            OR domain LIKE @like ESCAPE '\\'
+            OR url LIKE @like ESCAPE '\\'
+         ORDER BY created_at DESC, id DESC LIMIT @lim OFFSET @off`,
+      ).all({ like, lim, off });
+      const total = this._stmt(
+        `SELECT COUNT(*) AS c FROM link_snapshots
+         WHERE title LIKE @like ESCAPE '\\'
+            OR description LIKE @like ESCAPE '\\'
+            OR domain LIKE @like ESCAPE '\\'
+            OR url LIKE @like ESCAPE '\\'`,
+      ).get({ like }).c;
+      return { items, total };
+    }
+    const items = this._stmt(
+      'SELECT * FROM link_snapshots ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
+    ).all(lim, off);
+    const total = this._stmt('SELECT COUNT(*) AS c FROM link_snapshots').get().c;
+    return { items, total };
+  }
+
+  deleteLinkSnapshot(id) {
+    this._stmt('DELETE FROM link_snapshots WHERE id=?').run(id);
   }
 }

@@ -21,6 +21,8 @@ import createVoiceRouter from './routes/voice.js';
 import createMediaRouter from './routes/media.js';
 import createHealthRouter from './routes/health.js';
 import createAboutRouter from './routes/about.js';
+import createLinksRouter from './routes/links.js';
+import { createSnapshot, extractUrls, isPureUrl, urlDomain, LINK_CATEGORY } from './linkshot.js';
 import { ReceiptService } from './receipt.js';
 
 // ---- 设置持久化（覆盖默认配置） ----
@@ -185,6 +187,26 @@ const receipt = new ReceiptService({
   countSince: (channelId, peer, sinceTs) => storage.countMessagesByKindSince(channelId, peer, sinceTs),
 });
 
+// 链接快照：把消息正文里出现的 http(s) 链接归档为「元数据卡片 + HTML 全文 + 截图」。
+//
+// 刻意做成**异步非阻塞**：抓外部网页可能要几秒，绝不能拖慢入库与归档回执，
+// 因此调用处不 await。抓取失败只记日志 + 落一条 fetch_failed 记录，
+// 消息本身的归档完全不受影响。
+async function captureLinkSnapshots(record, text) {
+  if (config.links?.enabled === false) return;
+  const urls = extractUrls(text);
+  if (!urls.length) return;
+  for (const url of urls) {
+    try {
+      const snap = await createSnapshot(url, { archiveRoot: storage.archiveRoot });
+      const saved = storage.saveLinkSnapshot({ ...snap, messageId: record.id });
+      ws.broadcast({ type: 'link_snapshot', record: { messageId: record.id, snapshot: saved } });
+    } catch (e) {
+      console.error('[ClawVault] 链接快照失败:', url, e?.message || e);
+    }
+  }
+}
+
 // 消息处理链：白名单过滤 → 存「待分类」→ 广播
 //   → 纯文本 / 语音 → 写入 [通道]/聊天.xlsx（语音：社交端转写或 AI 补转，并保存音频）
 //   → 其他平台类型（图片/文件/视频/链接…）→ 优先用平台判定类型归类到分类文件夹（原方式）
@@ -272,13 +294,22 @@ async function handleChatMessage(channel, msg, record) {
       }
     }
   } else {
-    // 纯文本：恒归入「文本消息」大类；配置了 AI 时，AI 判定作为其下的子分类。
-    // 纯表情文本（如「[裂开]」）在入库时已被规整为 emoji 类型，这里同步归入「表情」。
-    const cat = textClassification(await classifyText(text).catch(() => null), {
-      emoji: isPureEmojiText(text),
-    });
-    category = cat.category;
-    sub = cat.sub;
+    // 纯文本归类，优先级：表情 > 单独一条网址 > AI 语义
+    // ① 纯表情文本（如「[裂开]」）入库时已被规整为 emoji 类型，这里同步归入「表情」；
+    // ② 整条消息就是一个网址 → 归入「收藏网址」，按域名做子分类，并异步抓取网页快照；
+    // ③ 其余纯文本：恒归入「文本消息」大类，AI 判定作为其下的子分类。
+    if (isPureEmojiText(text)) {
+      const cat = textClassification(null, { emoji: true });
+      category = cat.category;
+      sub = cat.sub;
+    } else if (isPureUrl(text)) {
+      category = LINK_CATEGORY;
+      sub = urlDomain(text);
+    } else {
+      const cat = textClassification(await classifyText(text).catch(() => null), { emoji: false });
+      category = cat.category;
+      sub = cat.sub;
+    }
   }
 
   const updated = storage.reclassify(record.id, category, sub);
@@ -288,6 +319,11 @@ async function handleChatMessage(channel, msg, record) {
     row: { ts: updated?.ts || record.ts, channel: channel.name, peer: msg.peer, category, sub, text, voice: voiceRel },
   });
   ws.broadcast({ type: 'reclassify', record: { ...(updated || record), category, sub, voice: voiceRel } });
+
+  // 正文里出现 http(s) 链接就归档快照（异步，不阻塞入库与回执）
+  captureLinkSnapshots(record, text).catch((e) =>
+    console.error('[ClawVault] 链接快照任务异常:', e?.message || e),
+  );
 }
 
 function handleStatus() {
@@ -367,6 +403,7 @@ app.use('/api/chats', createChatsRouter({ storage }));
 app.use('/api/voice', createVoiceRouter({ storage }));
 app.use('/api/media', createMediaRouter({ storage }));
 app.use('/api/about', createAboutRouter({ storage }));
+app.use('/api/links', createLinksRouter({ storage }));
 app.use('/api/health', createHealthRouter({ storage, manager, config, startedAt }));
 
 // 已注册的 bot 接入类型（前端"添加通道"表单据此渲染）

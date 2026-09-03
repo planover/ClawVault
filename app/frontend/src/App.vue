@@ -22,6 +22,7 @@ const messages = ref([]);
 const filter = reactive({ channelName: '', category: '', sub: '', kind: '', q: '' });
 const selectedId = ref(null);
 const selectedMessage = ref(null);
+const linkSnapshots = ref([]); // 选中消息关联的「收藏网址」快照
 const showChannels = ref(false);
 const showSettings = ref(false);
 const showAbout = ref(false);
@@ -249,6 +250,21 @@ function onSelectMessage(id) {
   newSub.value = selectedMessage.value?.sub || '';
   detailImgFailed.value = false;
   showDetail.value = true;
+  loadLinkSnapshots(id);
+}
+
+// 拉取某条消息关联的网址快照（详情面板展示；纯文本/语音之外的消息不会有关联快照，静默返回空）
+async function loadLinkSnapshots(messageId) {
+  if (!messageId) {
+    linkSnapshots.value = [];
+    return;
+  }
+  try {
+    const r = await api.messageLinks(messageId);
+    linkSnapshots.value = r.items || [];
+  } catch {
+    linkSnapshots.value = [];
+  }
 }
 
 // 图片灯箱：从列表或详情打开，统一用「当前筛选下的图片 id 序列」便于左右切换
@@ -333,9 +349,17 @@ function onWSEvent(e) {
     if (selectedMessage.value?.id === e.id) {
       selectedMessage.value = null;
       selectedId.value = null;
+      linkSnapshots.value = [];
     }
     loadMessages(true);
     loadFolders();
+  } else if (e.type === 'link_snapshot') {
+    // 抓取是异步的：消息已入库，几秒后快照才落库并通过 WS 推来。
+    // 仅当正看着对应消息时实时追加，避免无关的快照刷新整个列表。
+    if (selectedMessage.value && e.record?.messageId === selectedMessage.value.id && e.record?.snapshot) {
+      const exists = linkSnapshots.value.some((s) => s.id === e.record.snapshot.id);
+      if (!exists) linkSnapshots.value = [...linkSnapshots.value, e.record.snapshot];
+    }
   } else if (e.type === 'channels') {
     channels.value = e.channels;
   }
@@ -581,6 +605,24 @@ watch(selectedMessage, (v) => {
           <div v-if="selectedMessage.peer" class="block">
             <div class="section-label">会话对象</div>
             <div class="detail-peer">{{ selectedMessage.peer }}</div>
+          </div>
+
+          <div v-if="linkSnapshots.length" class="block link-snap">
+            <div class="section-label">网址快照</div>
+            <div v-for="s in linkSnapshots" :key="s.id" class="snap-card">
+              <div class="snap-head">
+                <a class="snap-title" :href="api.linkHtmlUrl(s.id)" target="_blank" rel="noopener">{{ s.title || s.url }}</a>
+                <span class="snap-domain">{{ s.domain || s.url }}</span>
+              </div>
+              <img v-if="s.cover_path" class="snap-cover" :src="api.linkCoverUrl(s.id)" alt="封面" loading="lazy" decoding="async" />
+              <p v-if="s.description" class="snap-desc">{{ s.description }}</p>
+              <img v-if="s.screenshot_path" class="snap-shot" :src="api.linkScreenshotUrl(s.id)" alt="网页截图" loading="lazy" decoding="async" />
+              <div v-else class="snap-noshot"><Icon name="image" :size="13" /> 截图不可用（未安装浏览器）</div>
+              <div class="snap-actions">
+                <a class="btn ghost sm" :href="api.linkHtmlUrl(s.id)" target="_blank" rel="noopener"><Icon name="external" :size="13" /> 查看归档</a>
+                <a class="btn ghost sm" :href="s.url" target="_blank" rel="noopener"><Icon name="arrowRight" :size="13" /> 打开原网址</a>
+              </div>
+            </div>
           </div>
 
           <div class="block reclass">
@@ -1049,6 +1091,91 @@ watch(selectedMessage, (v) => {
   color: var(--c-warn);
   font-size: 12.5px;
 }
+/* 网址快照卡片 */
+.link-snap {
+  gap: 10px;
+}
+.snap-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--c-surface-2);
+}
+.snap-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.snap-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--c-text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.snap-title:hover {
+  color: var(--c-primary);
+  text-decoration: underline;
+}
+.snap-domain {
+  font-size: 11.5px;
+  color: var(--c-faint);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.snap-cover {
+  display: block;
+  width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+}
+.snap-shot {
+  display: block;
+  width: 100%;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  cursor: zoom-in;
+}
+.snap-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--c-text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.snap-noshot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-3);
+  color: var(--c-faint);
+  font-size: 11.5px;
+}
+.snap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.snap-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .reclass {
   padding-top: 16px;
   border-top: 1px solid var(--c-border);
