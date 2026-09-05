@@ -172,7 +172,7 @@ watch(
       <div v-if="(m.kind === 'image' || m.kind === 'sticker') && m.media" class="thumb">
         <img
           v-if="!imgFailed[m.id]"
-          :src="api.thumbUrl(m.id, 320)"
+          :src="api.thumbUrl(m.id, 800)"
           loading="lazy"
           decoding="async"
           alt="图片"
@@ -315,17 +315,26 @@ watch(
 
 .thumb {
   margin-bottom: 8px;
-  /* UI-M5：固定高度容器，图片未加载完成前占位已定，列表不再随图片到达而跳动（CLS）。
-     容器定高 + cover 裁切，各卡片缩略图视觉也整齐划一。 */
-  height: 180px;
+  /* 用户反馈（v1.0.40 后）：180px 定高 + cover 裁切导致宽截图只能看到一条横条，
+     必须点开灯箱才能看内容。改为完整显示：
+     - 图片按原始比例完整呈现，不裁切（宽图撑满卡片宽度，长图按 480px 高度封顶居中）；
+     - min-height 作为加载占位，尽量减轻图片到达时的布局跳动（CLS 无法完全消除，
+       这里优先「看得见内容」）。 */
+  min-height: 120px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   border-radius: var(--r-md);
   overflow: hidden;
+  background: var(--c-surface-2);
 }
 .thumb img {
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  max-width: 100%;
+  max-height: 480px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
   border: 1px solid var(--c-border);
   border-radius: var(--r-md);
   background: var(--c-surface-2);
