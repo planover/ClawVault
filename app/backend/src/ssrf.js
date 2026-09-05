@@ -1,5 +1,23 @@
 import dns from 'node:dns';
 
+// 测试注入点（ENG-1 的教训）：此前测试用 `dns.lookup = async () => [...]` 打桩，
+// 把回调式 API 换成 async 函数，恰好掩盖了真实的签名错误。因此这里提供显式的
+// 解析器 seam，让桩与真实实现走同一条代码路径（含私网判定），而不是 monkey patch。
+// netguard.js 复用本 seam 并 re-export，测试只需注入一次即可同时覆盖
+// assertPublicUrl 与 safeFetch/downloadToBuffer 两条路径。
+let _resolver = null;
+
+// 供测试注入解析器替身；传 null 恢复默认（真实 DNS）。
+export function setResolver(fn) {
+  _resolver = fn;
+}
+
+// 统一 DNS 解析入口：有注入用注入，否则走真实 DNS。
+export async function lookupAll(hostname) {
+  if (_resolver) return _resolver(hostname);
+  return dns.promises.lookup(hostname, { all: true });
+}
+
 // SSRF 防护公共模块。
 //
 // 背景：ClawVault 会在两处向外发起请求——
@@ -42,8 +60,11 @@ export function isLiteralIp(host) {
   return false;
 }
 
-// 已知内网 / 保留域名：无需 DNS 即可拦截（主要用于「走代理出网」场景——
-// 沙箱内本地无法解析目标主机，必须由这里兜底，否则代理会被用于访问内网 / 云元数据）。
+// 已知内网 / 保留域名：无需 DNS 即可拦截。
+// 主要用于「走代理出网」场景：DNS 由代理侧解析，本地这条校验就是兜底，
+// 否则代理会变成访问内网 / 云元数据的跳板。
+// （注：早期注释写的「沙箱内本地无法解析目标主机」已过时——真机实测可直连出网，
+//   详见 linkshot.js 的代理出网说明。）
 export function isInternalHostname(hostname) {
   const h = String(hostname).toLowerCase().replace(/\.+$/, '');
   if (h === 'localhost' || h === 'localhost.localdomain') return true;
@@ -89,11 +110,22 @@ export async function assertPublicUrl(rawUrl, { proxy = null } = {}) {
   if (proxy) return u;
 
   // 4) 直连：本地 DNS 解析 + 私网 IP 校验
+  //
+  // ⚠️ 必须用 dns.promises.lookup。dns.lookup 是**回调式** API，不传回调会同步抛
+  // TypeError（ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function）。
+  // v1.0.39 及之前写成 `await dns.lookup(host, {all:true})`，该 TypeError 被下面的
+  // catch 吞掉后统一误报「无法解析目标主机」，后果是：
+  //   ① 任何域名型网址的快照 100% 失败（功能全废）；
+  //   ② 后面这段「解析后判私网」的 SSRF 校验从未执行过（死代码）。
+  // 同时 catch 收窄为只吞 DNS 类错误，避免再次把编程错误伪装成网络错误。
   let addrs;
   try {
-    addrs = await dns.lookup(u.hostname, { all: true });
-  } catch {
-    throw new Error('无法解析目标主机');
+    addrs = await lookupAll(u.hostname);
+  } catch (e) {
+    if (e && (e.code === 'ENOTFOUND' || e.code === 'EAI_AGAIN' || e.code === 'EAI_FAIL')) {
+      throw new Error('无法解析目标主机');
+    }
+    throw e;
   }
   for (const a of addrs) {
     if (isPrivateIp(a.address)) {

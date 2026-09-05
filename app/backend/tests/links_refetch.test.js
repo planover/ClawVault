@@ -9,6 +9,8 @@ import dns from 'node:dns';
 import { Storage } from '../src/storage.js';
 import createLinksRouter from '../src/routes/links.js';
 import { assertPublicUrl, isInternalHostname, isLiteralIp } from '../src/ssrf.js';
+// 出网替身走 netguard 的注入 seam（ENG-1：不再对 dns.lookup / 全局 fetch 做 monkey patch）
+import { setFetchImpl, setResolver } from '../src/netguard.js';
 
 // 清除环境里可能存在的代理（沙箱/CI 常注入 HTTPS_PROXY），保证单测走直连 + 桩 fetch。
 for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'LINKS_PROXY']) {
@@ -101,22 +103,17 @@ test('POST /api/links/:id/refetch：重新抓取并更新同一行 + 广播', as
   const app = express();
   app.use('/api/links', createLinksRouter({ storage: rstorage, ws }));
   const server = await startServer(app);
-  const realFetch = global.fetch;
-  const origLookup = dns.lookup;
   const html = '<html><head><meta property="og:title" content="重抓标题"><title>t</title></head><body>hi</body></html>';
-  // 桩 fetch / dns.lookup：模拟"联网后"可抓取。
-  // 注意只桩「外部网页」类请求（非 127.0.0.1），测试自身命中本机 server 的 fetch 仍走真实 fetch，
-  // 否则 res.json 会被桩对象覆盖而报「is not a function」。
-  global.fetch = (url, opts) => {
-    if (typeof url === 'string' && url.startsWith('http://127.0.0.1')) return realFetch(url, opts);
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      headers: { get: () => null },
-      arrayBuffer: async () => new TextEncoder().encode(html).buffer,
-    });
-  };
-  dns.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+  // 出网替身：模拟「联网后」可抓取。
+  // 通过 netguard 的 seam 注入，只影响 linkshot 的外部网页请求；
+  // 测试自身命中本机 server（127.0.0.1）的 fetch 仍走真实 fetch，不受影响。
+  setFetchImpl(async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    arrayBuffer: async () => new TextEncoder().encode(html).buffer,
+  }));
+  setResolver(async () => [{ address: '93.184.216.34', family: 4 }]);
   try {
     const res = await fetch(base(server) + `/api/links/${saved.id}/refetch`, { method: 'POST' });
     assert.equal(res.status, 200);
@@ -134,8 +131,8 @@ test('POST /api/links/:id/refetch：重新抓取并更新同一行 + 广播', as
     assert.equal(broadcasted.record.messageId, 3);
     assert.equal(broadcasted.record.snapshot.id, saved.id);
   } finally {
-    global.fetch = realFetch;
-    dns.lookup = origLookup;
+    setFetchImpl(null);
+    setResolver(null);
     server.close();
   }
 });

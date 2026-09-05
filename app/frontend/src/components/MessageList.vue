@@ -59,16 +59,24 @@ function escapeHtml(s) {
   })[c]);
 }
 
-function highlighted(text) {
-  const safe = escapeHtml(text);
+// UI-L6：高亮正则按 query 缓存——此前每条消息渲染都 new 一次 RegExp，
+// 列表 300 条就是 300 次编译。query 为空时直接返回转义文本（零正则开销）。
+const hlRegex = computed(() => {
   const q = (props.query || '').trim();
-  if (!q) return safe;
+  if (!q) return null;
   const needle = escapeHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   try {
-    return safe.replace(new RegExp(needle, 'gi'), (m) => `<mark>${m}</mark>`);
+    return new RegExp(needle, 'gi');
   } catch {
-    return safe;
+    return null;
   }
+});
+
+function highlighted(text) {
+  const safe = escapeHtml(text);
+  const re = hlRegex.value;
+  if (!re) return safe;
+  return safe.replace(re, (m) => `<mark>${m}</mark>`);
 }
 
 // 搜索高亮后再还原微信表情占位符（[裂开] → 😆）。输入已是转义文本，renderEmojiHtml 只做占位符替换，安全。
@@ -307,13 +315,19 @@ watch(
 
 .thumb {
   margin-bottom: 8px;
+  /* UI-M5：固定高度容器，图片未加载完成前占位已定，列表不再随图片到达而跳动（CLS）。
+     容器定高 + cover 裁切，各卡片缩略图视觉也整齐划一。 */
+  height: 180px;
+  border-radius: var(--r-md);
+  overflow: hidden;
 }
 .thumb img {
   display: block;
-  max-width: 100%;
-  max-height: 180px;
-  border-radius: var(--r-md);
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
   background: var(--c-surface-2);
   cursor: zoom-in;
   transition: filter var(--t-fast);

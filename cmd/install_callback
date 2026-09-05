@@ -1,3 +1,33 @@
 #!/bin/sh
-# ClawVault fnOS 生命周期钩子: install_callback（当前未使用，保留为 no-op 兼容 fnpack 标准接口）
+# ClawVault fnOS 生命周期钩子: install_callback
+#
+# SEC-03（程序目录只读化）：fnOS 解包后应用目录整体属包用户 clawvault 且 group 可写，
+# clawvault 一旦被拿下即可篡改 backend/src 实现 RCE 持久化（v1.0.39 体检实测
+# backend/src 为 drwxrwxr-x clawvault）。本钩子由应用中心以 root 调用，
+# 把代码/运行时目录收归 root 并去掉 group/other 写位，运行用户只读执行。
+#
+# 边界（务必保留 clawvault 可写的路径）：
+#   - $APP_DIR 顶层本身：app.sock 落在这里，Node 启动时要 unlink+重建；
+#   - 数据/日志在 @appshare（DATA_SHARE），不在本目录树下。
+# 注意：backend/node_modules 一并只读化后，cmd/main 的 better-sqlite3 自愈
+# （ensure_sqlite3 拷回纯净 .node）会写不动——此时它会明确报错而不是静默劣化，
+# 属预期取舍：代码完整性优先于运行时自修补。
+set -e
+
+APP_DIR="${TRIM_APPDEST:-/vol1/@appcenter/clawvault}"
+
+if [ "$(id -u)" = "0" ] && [ -d "$APP_DIR" ]; then
+  for p in backend runtime ui cmd config wizard manifest ICON.PNG ICON_256.PNG docker-compose.yml; do
+    if [ -e "$APP_DIR/$p" ]; then
+      chown -R root:root "$APP_DIR/$p" 2>/dev/null || true
+      chmod -R go-w "$APP_DIR/$p" 2>/dev/null || true
+    fi
+  done
+  # cmd 脚本必须保持可执行（fnOS 以包用户调用 cmd/main）
+  chmod 755 "$APP_DIR/cmd/main" 2>/dev/null || true
+  echo "ClawVault: 程序目录已只读化（root 所有，clawvault 只读执行）"
+else
+  # 非 root 调用（极少数环境）无法 chown，跳过不致命
+  echo "ClawVault: install_callback 非 root 环境，跳过程序目录只读化" >&2
+fi
 exit 0

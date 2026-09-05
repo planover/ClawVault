@@ -6,6 +6,9 @@ import Icon from './Icon.vue';
 const props = defineProps({
   show: { type: Boolean, default: false },
   ids: { type: Array, default: () => [] }, // 当前视图里的图片消息 id 列表（用于左右切换）
+  // UI-L1：可选的直接 URL 列表（如网址快照截图 /api/links/:id/screenshot，
+  // 它们不是消息媒体、没有 message id）。提供时优先于 ids。
+  srcs: { type: Array, default: () => [] },
   index: { type: Number, default: 0 },
 });
 const emit = defineEmits(['close']);
@@ -17,14 +20,17 @@ const loading = ref(false);
 const loadFailed = ref(false);
 const imgEl = ref(null);
 
-const count = computed(() => props.ids.length);
+const count = computed(() => (props.srcs.length ? props.srcs.length : props.ids.length));
 const safeIndex = computed(() => {
   if (!count.value) return 0;
   return Math.min(Math.max(props.index, 0), count.value - 1);
 });
 const currentId = computed(() => props.ids[safeIndex.value]);
 // 灯箱里直接展示原图（媒体接口），下载也走原图
-const currentSrc = computed(() => (currentId.value != null ? api.mediaUrl(currentId.value) : ''));
+const currentSrc = computed(() => {
+  if (props.srcs.length) return props.srcs[safeIndex.value] || '';
+  return currentId.value != null ? api.mediaUrl(currentId.value) : '';
+});
 const currentDownload = computed(() => currentSrc.value);
 
 // 切换图片时重置缩放/平移并重新加载
@@ -136,11 +142,32 @@ const closeBtn = ref(null);
 function close() {
   emit('close');
 }
-function download() {
+// UI-L5：下载文件名不再写死 .jpg——消息媒体优先用后端记录的原始文件名；
+// 直接 URL 源（如快照截图）从 URL 路径推断扩展名。
+async function resolveDownloadName() {
+  if (!props.srcs.length && currentId.value != null) {
+    try {
+      const info = await api.mediaInfo(currentId.value);
+      if (info?.filename) return info.filename;
+    } catch {
+      /* 拿不到元信息就用兜底名 */
+    }
+    return `clawvault-${currentId.value}`;
+  }
+  try {
+    const p = new URL(currentDownload.value, location.href).pathname;
+    const base = p.split('/').filter(Boolean).pop() || 'image';
+    return `clawvault-${base}.png`;
+  } catch {
+    return 'clawvault-image.png';
+  }
+}
+
+async function download() {
   if (!currentDownload.value) return;
   const a = document.createElement('a');
   a.href = currentDownload.value;
-  a.download = `clawvault-${currentId.value}.jpg`;
+  a.download = await resolveDownloadName();
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -256,6 +283,15 @@ function onTouchEnd(e) {
 
 <style scoped>
 .lightbox {
+  /* UI-L2：颜色统一走变量。灯箱是图片查看器，无论深浅主题都保持深色遮罩
+     （让图片本身成为唯一光源，业界惯例），因此变量固定为深色系，
+     但集中在这一处定义，后续要随主题变化只改这里。 */
+  --lb-fg: rgba(255, 255, 255, 0.9);
+  --lb-fg-dim: rgba(255, 255, 255, 0.82);
+  --lb-surface: rgba(20, 22, 28, 0.72);
+  --lb-surface-2: rgba(20, 22, 28, 0.6);
+  --lb-border: rgba(255, 255, 255, 0.12);
+  --lb-hover: rgba(255, 255, 255, 0.14);
   position: fixed;
   inset: 0;
   z-index: 200;
@@ -300,7 +336,7 @@ function onTouchEnd(e) {
 }
 .lb-counter {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--lb-fg-dim);
   font-variant-numeric: tabular-nums;
   background: rgba(0, 0, 0, 0.35);
   padding: 3px 10px;
@@ -317,9 +353,9 @@ function onTouchEnd(e) {
   gap: 4px;
   padding: 6px 8px;
   border-radius: 999px;
-  background: rgba(20, 22, 28, 0.72);
+  background: var(--lb-surface);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--lb-border);
 }
 .lb-btn {
   display: inline-flex;
@@ -328,18 +364,18 @@ function onTouchEnd(e) {
   width: 36px;
   height: 36px;
   border-radius: 999px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--lb-fg);
   transition: background var(--t-fast), color var(--t-fast);
 }
 .lb-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--lb-hover);
   color: #fff;
 }
 .lb-zoom {
   min-width: 52px;
   text-align: center;
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.86);
+  color: var(--lb-fg-dim);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   user-select: none;
@@ -355,14 +391,14 @@ function onTouchEnd(e) {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(20, 22, 28, 0.6);
+  color: var(--lb-fg);
+  background: var(--lb-surface-2);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--lb-border);
   transition: background var(--t-fast), transform var(--t-fast);
 }
 .lb-nav:hover {
-  background: rgba(20, 22, 28, 0.85);
+  background: var(--lb-surface);
 }
 .lb-prev {
   left: 18px;
@@ -376,7 +412,7 @@ function onTouchEnd(e) {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--lb-fg-dim);
   font-size: 13px;
 }
 .lb-loading .spinner {
@@ -384,7 +420,7 @@ function onTouchEnd(e) {
   height: 20px;
   border-width: 2.5px;
   border-top-color: #fff;
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: var(--lb-border);
   border-top-color: #fff;
 }
 .lb-missing {

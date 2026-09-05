@@ -1,11 +1,16 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { api } from '../api.js';
+import { useDialogA11y } from '../dialogA11y.js';
 import Icon from './Icon.vue';
 
 const props = defineProps({ show: Boolean });
 const emit = defineEmits(['close']);
 const info = ref(null);
+
+// UI-M1：Esc 关闭 + 打开时焦点入窗 + 关闭时焦点还原
+const dialogRoot = ref(null);
+useDialogA11y(() => props.show, () => emit('close'), dialogRoot);
 
 watch(
   () => props.show,
@@ -22,7 +27,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="show" class="modal-mask" @click.self="emit('close')">
+  <div v-if="show" ref="dialogRoot" class="modal-mask" role="dialog" aria-modal="true" @click.self="emit('close')">
     <div class="modal about">
       <div class="hero">
         <span class="hero-mark"><Icon name="archive" :size="22" /></span>

@@ -58,6 +58,12 @@ export default function createHealthRouter({ storage, manager, config, startedAt
   const r = Router();
 
   r.get('/', (req, res) => {
+    // SEC-15：/api/health 对网关身份豁免（fnOS 存活探针无登录态），因此生产态下
+    // 未携带网关身份的请求只回最小存活信息——完整负载里的归档路径、AI baseUrl、
+    // 通道列表、内存/CPU 等都属于内部拓扑信息，不应暴露给未认证调用方。
+    if (config.gatewayPrefix && !req.fnUser) {
+      return res.json({ ok: true, timestamp: Date.now() });
+    }
     const manifestVer = readManifestVersion();
     const composeVer = readComposeImageVersion();
     const mem = process.memoryUsage();

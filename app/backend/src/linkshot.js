@@ -3,10 +3,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import config from './config.js';
 import { assertPublicUrl } from './ssrf.js';
-// undici 仅用于「走代理出网」场景：其 ProxyAgent 作为 fetch 的 dispatcher，
-// 让沙箱内无本地 DNS 的应用也能经受信代理抓取网页（DNS 由代理侧解析）。
-// 未配置代理时仍走全局 fetch，行为与之前完全一致，测试桩也不受影响。
-import { ProxyAgent, fetch as undiciFetch } from 'undici';
+// 出网统一走 netguard.safeFetch（SSRF 校验 + DNS 钉住 + 超时 + 体积上限），
+// 代理能力也一并封装在 netguard 里（undici ProxyAgent）。
+// 测试替身通过 netguard 的 setFetchImpl 注入，不再对全局 fetch 做 monkey patch。
+import { safeFetch } from './netguard.js';
 
 // 网址快照引擎：消息里出现 http(s) 链接时，把网页存成三份资产——
 //   1) 元数据卡片：标题 / 摘要 / 站点名 / 封面图（秒级可用，零外部依赖）
@@ -31,9 +31,11 @@ const UA =
   'Chrome/120.0 Safari/537.36 ClawVaultBot/1.0';
 
 // ---------------------------------------------------------------- 代理出网
-// fnOS 应用沙箱本地无出站 DNS，导致直连 dns.lookup 失败、网页抓不到。
-// 用户配置一个受信出网代理（HTTPS_PROXY/HTTP_PROXY，或 settings 里的 links.proxy）
-// 后，fetch 经由该代理出网（DNS 由代理侧解析），即可在真机联网后正常抓取。
+// 说明（2026-09-04 真机复核修正）：早期记录「fnOS 应用沙箱本地无出站 DNS」，
+// 该结论**已过时**。在飞牛真机上以应用自带 Node、以 clawvault 身份实测，
+// 直连 fetch('https://mp.weixin.qq.com/...') 返回 200、dns 解析正常
+// （DNS 由 Tailscale 100.100.100.100 提供）。因此**默认直连即可抓**，无需代理。
+// 代理保留为可选能力：某些网络环境（或用户希望固定出口）仍可配置，
 // 优先级：settings(links.proxy) > HTTPS_PROXY > HTTP_PROXY。
 function resolveProxy() {
   const p =
@@ -46,28 +48,15 @@ function resolveProxy() {
   return p || null;
 }
 
-let _proxyAgent = null;
-let _proxyAgentUrl = null;
-function proxyDispatcher() {
-  const url = resolveProxy();
-  if (!url) return null;
-  if (!_proxyAgent || _proxyAgentUrl !== url) {
-    try {
-      _proxyAgent = new ProxyAgent(url);
-      _proxyAgentUrl = url;
-    } catch (e) {
-      console.error('[ClawVault] 代理初始化失败，回退直连:', e?.message || e);
-      return null;
-    }
-  }
-  return _proxyAgent;
-}
-
-// 统一出口：配了代理用 undiciFetch + dispatcher；否则全局 fetch（测试桩兼容）。
+// 统一出口（SEC-02 / SEC-08）：全部走 netguard.safeFetch。
+//   - 无代理：先解析并校验主机、把地址钉住后再建连，杜绝 DNS Rebinding；
+//   - 有代理：经代理出网，DNS 由代理侧解析（代理被视为用户受信出网通道）。
+// 体积上限与超时一并由 safeFetch 处理。
+// 注意：这里**不再**用被测试打桩的全局 fetch，改由 netguard 的 setFetchImpl
+// 提供注入 seam——此前对全局 fetch / dns.lookup 做 monkey patch，
+// 恰好掩盖了 ssrf.js 里 dns.lookup 缺回调的真实签名错误（130 个测试全绿、生产全挂）。
 function doFetch(url, opts = {}) {
-  const dispatcher = proxyDispatcher();
-  if (dispatcher) return undiciFetch(url, { ...opts, dispatcher });
-  return fetch(url, opts);
+  return safeFetch(url, { ...opts, proxy: resolveProxy() });
 }
 
 // ---------------------------------------------------------------- URL 提取
@@ -231,99 +220,53 @@ export function parseMetadata(html, baseUrl) {
 
 // ---------------------------------------------------------------- 抓取
 
-// 带体积上限地读取响应体，避免恶意/异常大页面吃满内存
-async function readCapped(res, maxBytes) {
-  const reader = res.body?.getReader?.();
-  if (!reader) {
-    const ab = await res.arrayBuffer();
-    return Buffer.from(ab.slice(0, maxBytes));
-  }
-  const chunks = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(Buffer.from(value));
-      total += value.length;
-      if (total >= maxBytes) {
-        try {
-          await reader.cancel();
-        } catch {
-          /* 忽略 */
-        }
-        break;
-      }
-    }
-  } finally {
-    try {
-      reader.releaseLock?.();
-    } catch {
-      /* 忽略 */
-    }
-  }
-  return Buffer.concat(chunks);
-}
-
 // 抓取网页。手动处理重定向以逐跳做 SSRF 校验——
 // 这是链接预览类功能最容易被绕过的一环（公网域名 302 跳 127.0.0.1 / 169.254.169.254）。
+// 超时与体积上限由 netguard.safeFetch 统一处理（不再自己读流）。
 export async function fetchPage(url, { timeoutMs, maxBytes, maxRedirects = 5 } = {}) {
   const tmo = timeoutMs ?? config.links?.timeoutMs ?? 15000;
   const cap = maxBytes ?? config.links?.maxBytes ?? 2 * 1024 * 1024;
-  const proxy = resolveProxy();
   let current = url;
   for (let hop = 0; hop <= maxRedirects; hop++) {
-    const safe = await assertPublicUrl(current, { proxy }); // 逐跳复检（走代理时跳过本地 DNS）
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), tmo);
-    try {
-      const res = await doFetch(safe.href, {
-        redirect: 'manual',
-        signal: ctrl.signal,
-        headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml,*/*;q=0.8' },
-      });
-      const loc = res.headers.get('location');
-      if (res.status >= 300 && res.status < 400 && loc) {
-        current = new URL(loc, safe.href).href;
-        continue;
-      }
-      if (!res.ok) throw new Error(`网页返回 ${res.status}`);
-      const buf = await readCapped(res, cap);
-      return { html: buf.toString('utf8'), finalUrl: safe.href, status: res.status };
-    } finally {
-      clearTimeout(timer);
+    // assertPublicUrl 负责策略（协议 / 字面私网 / 保留域名 / 解析后判私网），
+    // safeFetch 负责把校验通过的地址钉住再建连（防 DNS Rebinding）。
+    const safe = await assertPublicUrl(current, { proxy: resolveProxy() });
+    const res = await doFetch(safe.href, {
+      timeoutMs: tmo,
+      maxBytes: cap,
+      headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml,*/*;q=0.8' },
+    });
+    const loc = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && loc) {
+      current = new URL(loc, safe.href).href;
+      continue;
     }
+    if (!res.ok) throw new Error(`网页返回 ${res.status}`);
+    return { html: res.buffer.toString('utf8'), finalUrl: safe.href, status: res.status };
   }
   throw new Error('重定向次数过多');
 }
 
-// 下载封面图（同样走 SSRF 校验 + 体积上限），返回 buffer 与扩展名
+// 下载封面图（同样走 SSRF 校验 + 钉 IP + 体积上限），返回 buffer 与扩展名
 export async function fetchImage(url, { timeoutMs, maxBytes } = {}) {
   const tmo = timeoutMs ?? config.links?.timeoutMs ?? 15000;
-  const cap = maxBytes ?? 2 * 1024 * 1024;
+  const cap = maxBytes ?? config.links?.maxBytes ?? 2 * 1024 * 1024;
   const safe = await assertPublicUrl(url, { proxy: resolveProxy() });
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), tmo);
-  try {
-    const res = await doFetch(safe.href, {
-      redirect: 'manual',
-      signal: ctrl.signal,
-      headers: { 'user-agent': UA, accept: 'image/*' },
-    });
-    if (!res.ok) throw new Error(`图片返回 ${res.status}`);
-    const buf = await readCapped(res, cap);
-    const ct = String(res.headers.get('content-type') || '').toLowerCase();
-    const ext = ct.includes('png')
-      ? 'png'
-      : ct.includes('gif')
-        ? 'gif'
-        : ct.includes('webp')
-          ? 'webp'
-          : 'jpg';
-    return { buffer: buf, ext };
-  } finally {
-    clearTimeout(timer);
-  }
+  const res = await doFetch(safe.href, {
+    timeoutMs: tmo,
+    maxBytes: cap,
+    headers: { 'user-agent': UA, accept: 'image/*' },
+  });
+  if (!res.ok) throw new Error(`图片返回 ${res.status}`);
+  const ct = String(res.headers.get('content-type') || '').toLowerCase();
+  const ext = ct.includes('png')
+    ? 'png'
+    : ct.includes('gif')
+      ? 'gif'
+      : ct.includes('webp')
+        ? 'webp'
+        : 'jpg';
+  return { buffer: res.buffer, ext };
 }
 
 // ---------------------------------------------------------------- 落盘
@@ -409,36 +352,69 @@ async function loadPlaywright() {
 // 抓取整页截图。返回 { ok, reason?, error? }，绝不抛异常。
 export async function captureScreenshot(url, absOutPath, { timeoutMs } = {}) {
   if (config.links?.screenshot === false) return { ok: false, reason: 'disabled' };
+  // FUN-3：真机（fnOS）通常没有 Chromium，fpk 也不适合塞进几百 MB 的浏览器。
+  // 若用户已有一个浏览器服务（如宿主机 docker 里的 browserless/chrome），
+  // 可用 CDP 端点接进来。这是 opt-in，留空时行为与之前完全一致。
+  const cdp = String(config.links?.cdpEndpoint || process.env.CLAWVAULT_CDP || '').trim();
   const exe = resolveChromium();
-  if (!exe) return { ok: false, reason: 'no_browser' };
+  if (!cdp && !exe) return { ok: false, reason: 'no_browser' };
   const pw = await loadPlaywright();
   if (!pw) return { ok: false, reason: 'no_playwright' };
 
   const tmo = timeoutMs ?? config.links?.timeoutMs ?? 15000;
   const proxy = resolveProxy();
   let browser;
+  let closeBrowser = true;
   try {
-    // 快照只是一次性渲染，不需要持久化上下文；--no-sandbox 是容器内/非 root 运行的常见要求
-    const launchOpts = {
-      executablePath: exe,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-    };
-    // 走代理出网时，截图也经由同一代理，才能抓到联网后的页面
-    if (proxy) launchOpts.proxy = { server: proxy };
-    browser = await pw.chromium.launch(launchOpts);
+    // 出网前再校验一次目标：Chromium 会自己再解析一次 DNS，
+    // 不能因为 fetch 阶段校验过就假定此处安全。
+    const safe = await assertPublicUrl(url, { proxy });
+
+    if (cdp) {
+      // 连接已有浏览器服务：不负责启停，用 close() 会杀掉别人的容器，
+      // 因此只关闭自己打开的 page / context。
+      browser = await pw.chromium.connectOverCDP(cdp);
+      closeBrowser = false;
+    } else {
+      // SEC-10：**默认开启 Chromium 沙箱**。--no-sandbox 会让渲染器直接以应用用户
+      // 权限运行，一旦 Chromium 自身存在漏洞即可逃逸到宿主机，把「渲染一个外部网页」
+      // 变成 RCE。仅当用户明确设置 CHROMIUM_NO_SANDBOX=true（确实受限的容器环境）
+      // 才关闭沙箱，并打印告警。
+      const args = ['--disable-dev-shm-usage', '--disable-gpu'];
+      if (config.links?.chromiumNoSandbox === true) {
+        console.warn('[ClawVault] 警告：已按配置关闭 Chromium 沙箱（--no-sandbox），仅在受限容器中使用');
+        args.push('--no-sandbox');
+      }
+      const launchOpts = { executablePath: exe, args };
+      // 走代理出网时，截图也经由同一代理，才能抓到联网后的页面
+      if (proxy) launchOpts.proxy = { server: proxy };
+      browser = await pw.chromium.launch(launchOpts);
+    }
+
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: tmo });
-    // 给懒加载/字体一点时间，但不无限等（超时不致命，仍截当前画面）
-    await page.waitForTimeout(1200).catch(() => {});
-    writeFile(absOutPath, await page.screenshot({ fullPage: false }));
+    try {
+      await page.goto(safe.href, { waitUntil: 'domcontentloaded', timeout: tmo });
+      // 给懒加载/字体一点时间，但不无限等（超时不致命，仍截当前画面）
+      await page.waitForTimeout(1200).catch(() => {});
+      writeFile(absOutPath, await page.screenshot({ fullPage: false }));
+    } finally {
+      try {
+        await page.close();
+      } catch {
+        /* 忽略 */
+      }
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: 'capture_failed', error: String(e?.message || e).slice(0, 300) };
   } finally {
-    try {
-      await browser?.close();
-    } catch {
-      /* 忽略 */
+    // CDP 连接不关（那是别人的服务）；仅关闭自己 launch 出来的浏览器
+    if (browser && closeBrowser) {
+      try {
+        await browser.close();
+      } catch {
+        /* 忽略 */
+      }
     }
   }
 }

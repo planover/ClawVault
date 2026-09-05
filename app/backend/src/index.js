@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import config from './config.js';
 import * as vault from './vault.js';
@@ -22,6 +23,7 @@ import createMediaRouter from './routes/media.js';
 import createHealthRouter from './routes/health.js';
 import createAboutRouter from './routes/about.js';
 import createLinksRouter from './routes/links.js';
+import createBackupRouter from './routes/backup.js';
 import { createSnapshot, extractUrls, isPureUrl, urlDomain, LINK_CATEGORY } from './linkshot.js';
 import { ReceiptService } from './receipt.js';
 
@@ -87,6 +89,7 @@ function saveSettings() {
         ingest: config.ingest,
         classification: config.classification,
         archiveRoot: config.archiveRoot,
+        links: { cdpEndpoint: config.links.cdpEndpoint || '' },
         ownerUserId: config.ownerUserId,
       },
       null,
@@ -123,9 +126,10 @@ function isAdminUser(req) {
   return false;
 }
 function requireAdmin(req, res, next) {
-  if (isAdminUser(req)) return next();
-  if (req.fnUser && !config.ownerUserId) {
-    ensureOwner(req.fnUser.uid);
+  if (isAdminUser(req)) {
+    // SEC-05：owner 只能由「飞牛管理员」认领——首个发起写操作的管理员自动记为 owner。
+    // 旧逻辑是「任何登录用户第一个写操作即成 owner」，等于普通用户可抢注所有者。
+    if (req.fnUser && req.fnUser.isAdmin && !config.ownerUserId) ensureOwner(req.fnUser.uid);
     return next();
   }
   if (!req.fnUser && !config.gatewayPrefix) return next(); // 直连 / 开发模式放行
@@ -335,6 +339,17 @@ manager.resumeAll();
 
 const app = express();
 
+// ---- 安全响应头（SEC-17）----
+// 不引入 helmet 依赖，直接设置等效的基础头。CSP 仅在 SPA/静态 HTML 上设置
+// （见下方 public 路由），归档 HTML / Office 预览各自有更严格的专属 CSP。
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'SAMEORIGIN');
+  res.set('Referrer-Policy', 'same-origin');
+  res.set('X-Permitted-Cross-Domain-Policies', 'none');
+  next();
+});
+
 // ---- 飞牛统一网关适配 ----
 // 网关把公开路径 /app/clawvault/** 原样转发到本服务的 Unix Socket，
 // 因此收到的 req.url 带前缀。这里在最前面剥离前缀，让下游所有既有路由
@@ -370,25 +385,39 @@ app.use((req, res, next) => {
 // 纵深防御（OPS-P0-02）：生产态（gatewayPrefix 已配置）要求所有 /api 请求携带网关注入身份头，
 // 直连 Unix Socket（无网关头）视为未授权，返回 401。网关注入头对登录用户恒存在；
 // 例外：/api/health（fnOS 存活探针）、/api/about（品牌页，无敏感数据）、/api/inbound（外部 webhook 开放）。
+// 例外：/api/health（fnOS 存活探针，已脱敏见 health.js）、/api/about（品牌页，无敏感数据）、
+// /api/inbound（外部 webhook，靠 SEC-04 签名校验而非网关身份）。
+// SEC-04 收紧：startsWith('/api/inbound') 会连带放行 '/api/inboundevil' 这类拼前缀路径，
+// 改为「精确相等 或 前缀+'/'」匹配。
 const _gatewayExempt = ['/api/health', '/api/about', '/api/inbound'];
 app.use('/api', (req, res, next) => {
   if (!config.gatewayPrefix) return next(); // 开发 / 直连模式放行
   // 注意：app.use('/api') 挂载下 req.path 不含 /api 前缀，需用 baseUrl+path 还原完整路径
   const full = req.baseUrl + req.path;
-  if (_gatewayExempt.some((p) => full.startsWith(p))) return next();
+  if (_gatewayExempt.some((p) => full === p || full.startsWith(p + '/'))) return next();
   if (req.fnUser) return next();
   return res.status(401).json({ error: '未携带网关身份，拒绝访问' });
 });
 
-app.use(express.json({ limit: '2mb' }));
+// verify 回调留存原始请求体（SEC-04）：HMAC 签名校验必须对**原始字节**计算，
+// 不能用 JSON.parse 后的对象重新序列化（键序/空白差异会导致签名对不上）。
+app.use(
+  express.json({
+    limit: '2mb',
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 // 全局限流：/api 下每分钟每用户（或 IP）最多 300 次请求
 app.use('/api', rateLimit({ windowMs: 60_000, max: 300 }));
 
 if (config.demoMode) startDemoMode();
 
-// 写操作权限门禁：POST/PUT/DELETE/PATCH 到 settings/channels/messages 需管理员
-// （/api/inbound 等外部 webhook 不在此列，保持开放）
-const _protectedPrefix = ['/api/settings', '/api/channels', '/api/messages'];
+// 写操作权限门禁：POST/PUT/DELETE/PATCH 到 settings/channels/messages/links 需管理员
+// （/api/inbound 等外部 webhook 不在此列，保持开放但走 SEC-04 签名校验）
+// SEC-11：/api/links/:id/refetch 会触发出网抓取，属于写操作，纳入管理员门禁。
+const _protectedPrefix = ['/api/settings', '/api/channels', '/api/messages', '/api/links'];
 app.use((req, res, next) => {
   if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return next();
   if (!_protectedPrefix.some((p) => req.path.startsWith(p))) return next();
@@ -404,14 +433,54 @@ app.use('/api/voice', createVoiceRouter({ storage }));
 app.use('/api/media', createMediaRouter({ storage }));
 app.use('/api/about', createAboutRouter({ storage }));
 app.use('/api/links', createLinksRouter({ storage, ws }));
+// FUN-4：整库备份导出（zip 含主密钥，路由内部用 requireAdmin 限制为管理员）
+app.use('/api/backup', createBackupRouter({ config, storage, requireAdmin }));
 app.use('/api/health', createHealthRouter({ storage, manager, config, startedAt }));
 
 // 已注册的 bot 接入类型（前端"添加通道"表单据此渲染）
 app.get('/api/providers', (req, res) => res.json(listProviders()));
 
+// ---- 入站 Webhook 签名校验（SEC-04）----
+// /api/inbound 对网关身份豁免（外部系统没有飞牛登录态），此前等于「知道通道 id 即可
+// 任意写入归档」。现在支持通道级共享密钥：在通道 providerConfig.secret 配置后，
+// 请求必须携带以下任一凭据，否则 401：
+//   ① x-clawvault-token: <secret>                          （共享令牌，最简单）
+//   ② x-clawvault-signature: sha256=<HMAC-SHA256(原始请求体, secret) 的 hex>
+// 未配置 secret 的通道保持开放（向后兼容），但启动时打印一次警告引导配置。
+function _timingSafeEq(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+function verifyInboundSecret(req, secret) {
+  const token = req.headers['x-clawvault-token'];
+  if (token && _timingSafeEq(token, secret)) return true;
+  const sig = req.headers['x-clawvault-signature'];
+  if (sig && req.rawBody) {
+    const expect = 'sha256=' + crypto.createHmac('sha256', secret).update(req.rawBody).digest('hex');
+    if (_timingSafeEq(sig, expect)) return true;
+  }
+  return false;
+}
+const _inboundOpenWarned = new Set();
+
 // Webhook 类 Provider 入站：外部系统 POST 到这里把消息推入归档
 app.post('/api/inbound/:id/:sub?', async (req, res) => {
   try {
+    const secret = manager.inboundSecret(req.params.id);
+    if (secret === null) return res.status(404).json({ error: '通道不存在' });
+    if (secret) {
+      if (!verifyInboundSecret(req, secret)) {
+        return res.status(401).json({ error: '入站签名校验失败' });
+      }
+    } else if (!_inboundOpenWarned.has(req.params.id)) {
+      _inboundOpenWarned.add(req.params.id);
+      console.warn(
+        `[ClawVault] 通道 ${req.params.id} 的入站 Webhook 未配置 secret，任何知道该地址的人都能写入归档；` +
+          '建议在通道配置 providerConfig.secret 启用签名校验（SEC-04）',
+      );
+    }
     const result = await manager.inbound(req.params.id, req.body || {}, req.headers);
     if (result.verify) return res.json({ challenge: result.verify }); // Slack 订阅验证回显
     res.json(result);
@@ -420,13 +489,46 @@ app.post('/api/inbound/:id/:sub?', async (req, res) => {
   }
 });
 
+// ---- 统一错误包装（SEC-16）----
+// /api 下未匹配的路径一律回 JSON 404，而不是掉到 SPA 兜底返回 index.html
+// （否则前端 fetch 拿到 200+HTML，解析报错时排障非常困难）。
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: '接口不存在' });
+});
+
+// 全局错误中间件：任何路由抛出的异常统一回 JSON，绝不把堆栈/内部路径回给客户端。
+// 必须带 4 个参数 Express 才认作错误处理器；日志在服务端留全量。
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[ClawVault] 未捕获的路由异常:', err?.message || err);
+  if (res.headersSent) return;
+  const status = err?.status || err?.statusCode || 500;
+  const safe = status >= 400 && status < 500 && err?.message ? String(err.message).slice(0, 300) : '服务器内部错误';
+  res.status(status).json({ error: safe });
+});
+
 // 部署态 cwd 是应用根（如 /vol1/@appcenter/clawvault），不是 backend/src，
 // 因此不能用 process.cwd() 找 public；改用本模块文件位置推导。
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '..', 'public');
+// SPA 本体的 CSP（SEC-17）：只允许同源脚本/样式，样式放行 inline（Vue 构建产物含内联样式），
+// connect-src 放行同源 WebSocket。归档 HTML 与 Office 预览另有更严的专属 CSP。
+const SPA_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
+  "font-src 'self' data:; connect-src 'self' ws: wss:; media-src 'self' blob:; " +
+  "frame-ancestors 'self'; base-uri 'self'; form-action 'self'";
 if (fs.existsSync(publicDir)) {
-  app.use(express.static(publicDir));
-  app.get('*', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+  app.use(
+    express.static(publicDir, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) res.set('Content-Security-Policy', SPA_CSP);
+      },
+    }),
+  );
+  app.get('*', (req, res) => {
+    res.set('Content-Security-Policy', SPA_CSP);
+    res.sendFile(path.join(publicDir, 'index.html'));
+  });
 } else {
   app.get('/', (req, res) =>
     res.send('ClawVault backend running. Build the frontend (npm run build in app/frontend) to enable the Web UI.'),

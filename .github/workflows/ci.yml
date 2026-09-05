@@ -9,11 +9,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Node 22 是 fnOS 真机运行时（ABI 127，better-sqlite3 11.10 稳定），作为必过门禁；
-    # Node 24 标记为 experimental：better-sqlite3 11.10 在 Node 24 的 V8 GC 压力下会偶发原生中止
-    # （Assertion failed: (env) != nullptr，Statement::~Statement），属第三方原生模块与 Node 24 的
-    # 兼容问题，非业务代码回归（storage.js 已全部走 _stmt() 缓存、无即用即弃 Statement）。
-    # 该项 continue-on-error，失败不阻断发版门禁，仅作前向兼容信号。
+    # Node 22 是 fnOS 真机运行时（ABI 127），Node 24 为前向兼容版本。
+    # ENG-4（v1.0.40）：better-sqlite3 已升级 11.10 → 12.11.1，其在 Node 24 V8 GC 压力下
+    # 偶发原生中止（Assertion failed: (env) != nullptr）的问题已修复（本机 Node 24.19
+    # 连跑 3 轮 139/139 全绿）。两个版本同为必过门禁，不再设 experimental。
     strategy:
       fail-fast: false
       matrix:
@@ -21,7 +20,7 @@ jobs:
           - node-version: '22'
             experimental: false
           - node-version: '24'
-            experimental: true
+            experimental: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 

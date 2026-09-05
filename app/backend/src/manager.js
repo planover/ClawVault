@@ -152,6 +152,15 @@ export class ChannelManager {
     this._persist();
   }
 
+  // 取通道配置的入站密钥（SEC-04）：通用 Webhook 通道可在 providerConfig.secret
+  // 配置共享密钥，配置后 /api/inbound 将强制校验签名/令牌。
+  inboundSecret(id) {
+    const ch = this.channels.get(id);
+    if (!ch) return null;
+    const s = ch.providerConfig?.secret;
+    return s ? String(s) : '';
+  }
+
   // Webhook 类入站：归一化后进入归档链路。返回 { verify } 时由路由直接回显（Slack 订阅验证）。
   async inbound(id, body, headers) {
     const ch = this.channels.get(id);

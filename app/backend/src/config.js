@@ -97,6 +97,24 @@ export const config = {
     // Chromium 可执行文件路径（opt-in）。留空则自动探测常见路径，
     // 探测不到就跳过截图。也可用环境变量 CLAWVAULT_CHROMIUM 指定。
     chromiumPath: env('CHROMIUM_PATH', ''),
+    // 出网代理（v1.0.40 修复）：此前 proxy 只在 DEFAULTS.links 里定义、导出的
+    // config.links 漏了这个字段，导致 config.links?.proxy 永远是 undefined，
+    // 文档中「优先读配置项 links.proxy」实际从未生效，只有环境变量能用。
+    proxy: env('LINKS_PROXY', DEFAULTS.links.proxy),
+    // Chromium 沙箱（SEC-10）：默认**开启**沙箱。--no-sandbox 会让渲染器直接以
+    // 应用用户权限运行，一旦 Chromium 自身有漏洞即可逃逸到宿主机。
+    // 仅在确实是受限容器环境（无法创建 namespace）时才由用户显式关闭。
+    chromiumNoSandbox: env('CHROMIUM_NO_SANDBOX', 'false') === 'true',
+    // CDP 端点（FUN-3）：真机无 Chromium 时可复用已有浏览器服务
+    // （如宿主机 docker 里的 browserless/chrome）。留空则按本地可执行路径探测。
+    // 这是 opt-in 能力，留空时行为与之前完全一致。
+    cdpEndpoint: env('LINKS_CDP_ENDPOINT', ''),
+  },
+  // 语音转码（SEC-09）：ffmpeg 处理的是来源不可信的音频，
+  // 必须设超时与体积上限，避免畸形输入把进程挂住或吃满内存。
+  transcode: {
+    timeoutMs: parseInt(env('TRANSCODE_TIMEOUT_MS', '30000'), 10),
+    maxBytes: parseInt(env('TRANSCODE_MAX_BYTES', String(32 * 1024 * 1024)), 10),
   },
   demoMode: env('DEMO_MODE', String(DEFAULTS.demo_mode)) === 'true',
 };

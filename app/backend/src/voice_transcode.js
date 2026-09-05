@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { detectMediaExt } from './ilink_crypto.js';
+import config from './config.js';
 
 // 微信 iLink 语音常见格式：SILK v3 / AMR / WEBM / MP3。
 // 浏览器原生只支持 MP3/WAV/OGG/AAC/FLAC/WEBM，不支援 SILK/AMR。
@@ -57,9 +58,36 @@ function pcmToWav(pcm, sampleRate = 24000, channels = 1, bits = 16) {
 }
 
 // 通过 ffmpeg 将输入音频流转码为 outputExt（默认 mp3）。
-function ffmpegPipe(input, outputExt = 'mp3') {
+//
+// SEC-09：ffmpeg 处理的是**来源不可信**的音频（webhook 推来的 base64）。
+// ffmpeg 历史上有多起解码器 CVE（越界读 / RCE），且畸形输入可能让它挂住不退出。
+// 因此这里加三道约束：
+//   ① 入参体积上限——超限直接拒转，不交给 ffmpeg；
+//   ② 硬超时——到点 SIGKILL，绝不无限等待；
+//   ③ 输出体积上限——边收边判，超限立即杀进程，防解压炸弹（AMR→MP3 会放大）。
+function ffmpegPipe(input, outputExt = 'mp3', { timeoutMs = 30000, maxInputBytes = 32 * 1024 * 1024, maxOutputBytes = 64 * 1024 * 1024 } = {}) {
+  if (Buffer.isBuffer(input) && input.length > maxInputBytes) {
+    return Promise.reject(new Error(`音频体积超出转码上限（${input.length} > ${maxInputBytes}）`));
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', [
+    let child;
+    let settled = false;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(arg);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child?.kill('SIGKILL');
+      } catch {
+        /* 已退出 */
+      }
+      finish(reject, new Error(`ffmpeg 转码超时（>${timeoutMs}ms）`));
+    }, timeoutMs);
+
+    child = spawn('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
       '-i', '-',
@@ -68,17 +96,39 @@ function ffmpegPipe(input, outputExt = 'mp3') {
     ]);
     const out = [];
     let err = '';
-    child.stdout.on('data', (d) => out.push(d));
+    let outBytes = 0;
+    let overflow = false;
+    child.stdout.on('data', (d) => {
+      outBytes += d.length;
+      if (outBytes > maxOutputBytes) {
+        overflow = true;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* 已退出 */
+        }
+        finish(reject, new Error(`ffmpeg 输出超出上限（>${maxOutputBytes}）`));
+        return;
+      }
+      out.push(d);
+    });
     child.stderr.on('data', (d) => {
-      err += d.toString();
+      if (err.length < 4096) err += d.toString();
     });
-    child.on('error', (e) => reject(e));
+    child.on('error', (e) => finish(reject, e));
     child.on('close', (code) => {
-      if (code === 0) return resolve(Buffer.concat(out));
-      reject(new Error(`ffmpeg 退出码 ${code}: ${err.slice(0, 240)}`));
+      if (overflow) return;
+      if (code === 0) return finish(resolve, Buffer.concat(out));
+      finish(reject, new Error(`ffmpeg 退出码 ${code}: ${err.slice(0, 240)}`));
     });
-    child.stdin.write(input);
-    child.stdin.end();
+    // stdin 写入失败（进程提前退出）不应把整个进程打挂
+    child.stdin.on('error', () => {});
+    try {
+      child.stdin.write(input);
+      child.stdin.end();
+    } catch (e) {
+      finish(reject, e);
+    }
   });
 }
 
@@ -114,6 +164,13 @@ async function silkToWav(buf) {
 // 返回 { buffer, ext, playable }；playable=false 表示转码失败，仍保留原格式。
 export async function transcodeVoice(buf, extHint = '') {
   if (!buf || buf.length < 12) return { buffer: buf, ext: extHint || 'mp3', playable: true };
+  // SEC-09：体积天花板在入口处就卡住，超限的原始音频不进入任何转码路径
+  const tcfg = config.transcode || {};
+  const maxIn = tcfg.maxBytes || 32 * 1024 * 1024;
+  if (buf.length > maxIn) {
+    console.error(`[ClawVault] 语音体积超限，跳过转码（${buf.length} > ${maxIn}）`);
+    return { buffer: buf, ext: extHint || 'mp3', playable: false };
+  }
   const detected = detectMediaExt(buf);
   const ext = detected || extHint || 'mp3';
   if (PLAYABLE_AUDIO.includes(ext)) {
@@ -134,7 +191,10 @@ export async function transcodeVoice(buf, extHint = '') {
   // AMR：用 ffmpeg 转码为 MP3。
   if (isAmr(buf) || ext === 'amr') {
     try {
-      const mp3 = await ffmpegPipe(buf, 'mp3');
+      const mp3 = await ffmpegPipe(buf, 'mp3', {
+        timeoutMs: tcfg.timeoutMs || 30000,
+        maxInputBytes: maxIn,
+      });
       if (mp3.length < 100) throw new Error('ffmpeg 输出过短');
       return { buffer: mp3, ext: 'mp3', playable: true };
     } catch (e) {

@@ -17,6 +17,9 @@ export default function createSettingsRouter({ config, storage, saveSettings }) 
       classification: config.classification,
       archiveRoot: config.archiveRoot,
       demoMode: config.demoMode,
+      // FUN-3：网页快照的 CDP 端点（复用外部浏览器服务，如宿主机 docker 的
+      // browserless/chrome）。留空 = 按本地 Chromium 路径探测，探测不到则跳过截图。
+      links: { cdpEndpoint: config.links?.cdpEndpoint || '' },
       total: storage.count(),
     });
   });
@@ -32,6 +35,12 @@ export default function createSettingsRouter({ config, storage, saveSettings }) 
     if (b.ingest) Object.assign(config.ingest, b.ingest);
     if (b.classification) Object.assign(config.classification, b.classification);
     if (b.archiveRoot) config.archiveRoot = b.archiveRoot;
+    // FUN-3：仅放行白名单字段，避免把 links 的运行时默认（timeoutMs 等）被异常覆盖
+    if (b.links && typeof b.links === 'object') {
+      if (typeof b.links.cdpEndpoint === 'string') {
+        config.links.cdpEndpoint = b.links.cdpEndpoint.trim().slice(0, 500);
+      }
+    }
     config.ai.enabled = Boolean(config.ai.apiKey) && config.classification.enabled !== false;
     saveSettings();
     res.json({ ok: true, ai: publicAi() });

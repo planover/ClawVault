@@ -15,6 +15,9 @@ import {
   LINK_CATEGORY,
 } from '../src/linkshot.js';
 import { assertPublicUrl, isPrivateIp } from '../src/ssrf.js';
+// 出网替身走 netguard 的注入 seam，不再对 dns.lookup / 全局 fetch 做 monkey patch。
+// （ENG-1：此前正是 `dns.lookup = async () => [...]` 这类打桩掩盖了真实签名错误。）
+import { setFetchImpl, setResolver } from '../src/netguard.js';
 
 // 清除环境里可能存在的代理（沙箱/CI 常注入 HTTPS_PROXY），保证单测走直连 + 桩 fetch，
 // 不被意外代理劫持（生产态仍按 LINKS_PROXY / HTTPS_PROXY 出网）。
@@ -131,32 +134,75 @@ test('assertPublicUrl：拒绝非 http(s) 与含账号密码的链接', async ()
   await assert.rejects(() => assertPublicUrl('http://user:pw@1.2.3.4/'), /用户名密码/);
 });
 
+// ---------------------------------------------------------------- ENG-1 / ENG-2 回归
+// 背景：v1.0.39 及之前这里只有「拒绝」类断言，且用 `dns.lookup = async () => [...]`
+// 把回调式 API 打桩成 async 函数——**恰好绕过了** ssrf.js 里 `await dns.lookup(h,{all:true})`
+// 缺回调的真实签名错误，于是 130 个测试全绿，而真机上所有域名型网址 100% 抓取失败，
+// 且「DNS 解析后判私网」这段 SSRF 校验从未执行过。以下三条是防复发护栏。
+
+test('ENG-1 护栏：dns.lookup 缺回调必须抛错（禁止改回 await dns.lookup(...) 写法）', () => {
+  // dns.lookup 是回调式 API；不传回调会同步抛 ERR_INVALID_ARG_TYPE。
+  // 保留此断言，防止后人再把它当 Promise 用。
+  assert.throws(() => dns.lookup('example.com', { all: true }), /callback/i);
+});
+
+test('ENG-1 护栏：dns.promises.lookup 返回 Promise（这才是应当使用的写法）', () => {
+  const p = dns.promises.lookup('example.com', { all: true });
+  assert.ok(p && typeof p.then === 'function', '应返回 Promise');
+  // 消化可能的 rejection（无 DNS 环境下会 ENOTFOUND，但必须是异步而非同步抛）
+  p.catch(() => {});
+});
+
+// 正向覆盖（ENG-2）：安全断言不能只有 rejects，必须有一条「放行」路径。
+// 这条**刻意不打桩**，走真实 DNS——正是当初缺失的那一环。
+test('ENG-2：assertPublicUrl 对公网域名应当放行（真实 DNS，不打桩）', async (t) => {
+  try {
+    const u = await assertPublicUrl('https://example.com/');
+    assert.equal(u.hostname, 'example.com');
+  } catch (e) {
+    if (/无法解析目标主机/.test(e.message)) {
+      t.skip('当前环境无 DNS，跳过真实解析用例');
+      return;
+    }
+    throw e;
+  }
+});
+
+// SEC-08：解析结果必须被钉住——resolvePinned 返回的应是校验通过的公网地址，
+// 私网 / 云元数据一律拒绝（这条同时覆盖 netguard 与 ssrf 两条路径）。
+test('SEC-08：resolvePinned 拒绝私网并放行公网', async () => {
+  const { resolvePinned } = await import('../src/netguard.js');
+  await assert.rejects(() => resolvePinned('127.0.0.1'), /内网|回环/);
+  await assert.rejects(() => resolvePinned('169.254.169.254'), /内网|回环/);
+  const ok = await resolvePinned('1.1.1.1');
+  assert.equal(ok[0].address, '1.1.1.1');
+  await assert.rejects(() => resolvePinned('localhost'), /内网|保留域名/);
+});
+
 // ---------------------------------------------------------------- 截图优雅降级
 test('createSnapshot：无浏览器时仍落盘 HTML 元数据，截图优雅跳过（不抛异常）', async () => {
   const archiveRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fnclaw-snap-'));
-  const origFetch = global.fetch;
-  const origLookup = dns.lookup;
   const html = `<html><head>
     <meta property="og:title" content="示例标题">
     <meta property="og:description" content="示例摘要文本">
     <title>回退</title></head><body>内容</body></html>`;
-  // 桩掉 fetch：始终返回同一段 HTML，避免真实外网请求（也顺带验证 fetchPage 解析路径）
-  global.fetch = async () => ({
+  // 出网替身：始终返回同一段 HTML，避免真实外网请求（也顺带验证 fetchPage 解析路径）
+  setFetchImpl(async () => ({
     ok: true,
     status: 200,
     headers: { get: () => null },
     arrayBuffer: async () => new TextEncoder().encode(html).buffer,
-  });
-  // 桩掉 dns.lookup：让 assertPublicUrl 的 SSRF 校验离线也能通过（解析到任意公网 IP）
-  dns.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+  }));
+  // 解析器替身：让 SSRF 校验离线也能通过（解析到任意公网 IP）
+  setResolver(async () => [{ address: '93.184.216.34', family: 4 }]);
 
   const savedChromium = config.links?.chromiumPath;
   let rec;
   try {
     rec = await createSnapshot('https://example.com/post/1', { archiveRoot, ts: 1700000000000 });
   } finally {
-    global.fetch = origFetch;
-    dns.lookup = origLookup;
+    setFetchImpl(null);
+    setResolver(null);
     config.links && (config.links.chromiumPath = savedChromium);
   }
 

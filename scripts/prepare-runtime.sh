@@ -37,7 +37,7 @@ cleanup_tmp() {
 }
 
 NODE_VER="22.23.2"          # ABI 127，与 better-sqlite3 预编译 node-v127 对应
-BSQL_VER="11.10.0"          # 必须与 app/backend/package.json 中 better-sqlite3 版本一致
+BSQL_VER="12.11.1"          # 必须与 app/backend/package.json 中 better-sqlite3 版本一致
 FFMPEG_VER="6.1.1"          # 静态构建版本（可选）；eugeneware/ffmpeg-static 标签为 b6.1.1
 
 RT="$REPO/app/runtime"
@@ -91,15 +91,18 @@ verify_sha256() {
   [ "$(sha256_of "$f")" = "$exp" ]
 }
 
-# 内置二进制预期 SHA256。由维护者填入官方/可信哈希后启用强校验；
-# 留空则仅做 ELF/gzip 头校验，并在日志告警（TOFU，非强校验）。
-# 维护者获取方式：
-#   node   → https://nodejs.org/dist/v${NODE_VER}/SHASUMS256.txt 中 node-v${NODE_VER}-linux-x64.tar.gz 一行
-#   bsql   → 下载对应 better-sqlite3 预编译包后 sha256sum 计算
-#   ffmpeg → 下载对应 ffmpeg-static 后 sha256sum 计算
-NODE_SHA256=""
-BSQL_SHA256=""
-FFMPEG_SHA256=""
+# 内置二进制预期 SHA256（SEC-12：已钉死，供应链强校验）。
+# 2026-09 实测核对来源：
+#   node   tar.gz → https://nodejs.org/dist/v22.23.2/SHASUMS256.txt 官方值；bin/node 为包内解出值
+#   bsql   tar.gz → GitHub WiseLibs 官方 release 与 npmmirror 同源同哈希（互验一致）；
+#          BSQL_NODE_SHA256 为 tar.gz 内解出的 better_sqlite3.node 哈希
+#   ffmpeg → 现行随包二进制的哈希（eugeneware/ffmpeg-static b6.1.1 linux-x64）
+# 改版本号（NODE_VER/BSQL_VER/FFMPEG_VER）时必须同步更新这里的哈希，否则构建会硬性失败。
+NODE_SHA256="b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a"
+NODE_BIN_SHA256="3517c2df0b2f8cd7f422b4b8450ef81c6889f08eb03e281d6de9079b15e6a327"
+BSQL_SHA256="94ce113ea2d9347fcd1cf8e46445cc271d1dbd02d05a64aa460442222f023b11"
+BSQL_NODE_SHA256="df9fbd0d061f360d81fb51e265c53c9605020bd68219e34f33c07c85de15719a"
+FFMPEG_SHA256="e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99"
 
 # 取文件：优先本地 .dl/，否则从 URL 列表依次下载。
 # 用法： fetch [--elf] <out> <url1> [<url2> ...]
@@ -157,9 +160,14 @@ fetch() {
 }
 
 # 1) Node 运行时（linux-x64）
-if is_elf "$NODE_DIR/bin/node"; then
+# 已存在时除 ELF 头外还比对 pinned 哈希（SEC-12）：本地被篡改/版本不对的旧二进制不得直接复用
+if is_elf "$NODE_DIR/bin/node" && verify_sha256 "$NODE_DIR/bin/node" "$NODE_BIN_SHA256"; then
   echo "✓ Node 运行时已存在且校验通过: $NODE_DIR/bin/node"
 else
+  if [ -e "$NODE_DIR/bin/node" ]; then
+    echo "    ! 已存在的 Node 二进制哈希不匹配（可能版本过旧或被篡改），重新下载" >&2
+    rm -rf "$NODE_DIR"
+  fi
   echo "==> 准备 Node v$NODE_VER linux-x64"
   TMP="$(mktemp -d "$TMP_BASE/prepare.XXXXXX")"
   if fetch "$TMP/node.tar.gz" \
@@ -191,6 +199,7 @@ else
     chmod +x "$NODE_DIR/bin/node" 2>/dev/null || true
     cleanup_tmp "$TMP"
     is_elf "$NODE_DIR/bin/node" || { echo "✗ Node 二进制不是 Linux ELF" >&2; exit 1; }
+    verify_sha256 "$NODE_DIR/bin/node" "$NODE_BIN_SHA256" || { echo "✗ 解出的 Node 二进制哈希不匹配（可能已被篡改）" >&2; exit 1; }
     echo "    ✓ Node 二进制已就位: $(stat -c%s "$NODE_DIR/bin/node") 字节"
   else
     cleanup_tmp "$TMP"
@@ -202,9 +211,14 @@ fi
 # 2) better-sqlite3 linux 预编译（Node 22 ABI 127）
 # 注意：本机 npm install 可能残留 Windows PE 或 darwin Mach-O，必须强制替换为 Linux ELF。
 BSQL_NODE="$BSQL_DIR/build/Release/better_sqlite3.node"
-if is_elf "$BSQL_NODE"; then
-  echo "✓ better-sqlite3 原生模块已存在且为 Linux ELF"
+# 已存在时强制比对 pinned 哈希（SEC-12）：真机曾出现「ELF 合法但来源不明」的二进制，
+# 仅看 ELF 头无法发现供应链篡改
+if is_elf "$BSQL_NODE" && verify_sha256 "$BSQL_NODE" "$BSQL_NODE_SHA256"; then
+  echo "✓ better-sqlite3 原生模块已存在且哈希匹配"
 else
+  if [ -e "$BSQL_NODE" ]; then
+    echo "    ! 已存在的 better_sqlite3.node 哈希不匹配，重新注入官方预编译" >&2
+  fi
   echo "==> 准备 better-sqlite3 v$BSQL_VER linux-x64 预编译"
   # 用 mv 移出仓库（而非 rm），避免 Windows safe-delete 守护拦截删除导致脚本中断
   [ -e "$BSQL_NODE" ] && mv -f "$BSQL_NODE" /tmp/bsql-stale-$$.node 2>/dev/null || true
@@ -237,6 +251,7 @@ else
       cp "$NODE_BIN_FOUND" "$BSQL_NODE"
       cleanup_tmp "$TMP"
       is_elf "$BSQL_NODE" || { echo "✗ better_sqlite3.node 不是 Linux ELF" >&2; exit 1; }
+      verify_sha256 "$BSQL_NODE" "$BSQL_NODE_SHA256" || { echo "✗ 解出的 better_sqlite3.node 哈希不匹配（可能已被篡改）" >&2; exit 1; }
       echo "    ✓ better_sqlite3.node ($(stat -c%s "$BSQL_NODE") bytes)"
     else
       echo "    ✗ 预编译包内未找到 better_sqlite3.node" >&2
@@ -265,9 +280,12 @@ else
 fi
 
 # 3) 可选 ffmpeg 静态二进制（AMR 语音转码用，缺失不致命）
-if is_elf "$BIN_DIR/ffmpeg"; then
-  echo "✓ ffmpeg 已存在且校验通过"
+if is_elf "$BIN_DIR/ffmpeg" && verify_sha256 "$BIN_DIR/ffmpeg" "$FFMPEG_SHA256"; then
+  echo "✓ ffmpeg 已存在且哈希匹配"
 else
+  if [ -e "$BIN_DIR/ffmpeg" ]; then
+    echo "    ! 已存在的 ffmpeg 哈希不匹配，重新下载" >&2
+  fi
   echo "==> 准备静态 ffmpeg (可选)"
   rm -f "$BIN_DIR/ffmpeg" 2>/dev/null || true
   TMP="$(mktemp -d "$TMP_BASE/prepare.XXXXXX")"

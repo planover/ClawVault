@@ -24,9 +24,14 @@ async function assertSafeTarget(baseUrl) {
   }
   let addrs;
   try {
-    addrs = await dns.lookup(u.hostname, { all: true });
-  } catch {
-    throw new Error('无法解析目标主机');
+    // 必须用 promises 版：dns.lookup 是回调式 API，缺回调会同步抛 TypeError，
+    // 被 catch 吞掉后会误报成「无法解析目标主机」（与 ssrf.js 同一个坑）。
+    addrs = await dns.promises.lookup(u.hostname, { all: true });
+  } catch (e) {
+    if (e && (e.code === 'ENOTFOUND' || e.code === 'EAI_AGAIN' || e.code === 'EAI_FAIL')) {
+      throw new Error('无法解析目标主机');
+    }
+    throw e;
   }
   for (const a of addrs) {
     if (isPrivateIp(a.address)) {
@@ -111,11 +116,45 @@ export function resolveClassification(kind) {
   return { source: 'ai' };
 }
 
+// AI baseUrl 的 SSRF 校验缓存（SEC-08）。
+// classifyText 是**每条消息**都要走的热路径，不能每次都做一次 DNS 解析；
+// 但 baseUrl 又可能中途被改成内网地址（配置被篡改），故做 5 分钟短 TTL 缓存，
+// 兼顾性能与「配置变更后能及时拦截」。缓存只记成功/失败结果，不记地址。
+const _targetCache = new Map();
+const TARGET_CACHE_TTL = 5 * 60 * 1000;
+
+async function assertSafeTargetCached(baseUrl) {
+  const key = String(baseUrl || '');
+  const hit = _targetCache.get(key);
+  if (hit && Date.now() - hit.ts < TARGET_CACHE_TTL) {
+    if (hit.error) throw new Error(hit.error);
+    return;
+  }
+  try {
+    await assertSafeTarget(baseUrl);
+    _targetCache.set(key, { ts: Date.now(), error: '' });
+  } catch (e) {
+    _targetCache.set(key, { ts: Date.now(), error: e.message || String(e) });
+    throw e;
+  }
+}
+
 // 调用兼容 Anthropic 格式的 /v1/messages 接口，对消息做分类
 // 返回 { category, sub } 或 null（未配置 AI 时）
 export async function classifyText(text) {
   const { apiKey, baseUrl, model, enabled } = config.ai;
   if (!enabled || !apiKey) return null;
+
+  // SEC-08：实际出网前也要过一遍目标校验（此前这里完全没有校验，
+  // assertSafeTarget 只在「测试连接」时被调用，等于真实请求裸奔）。
+  // 已保存的默认配置在 assertSafeTarget 内豁免，本地自托管 AI 不受影响。
+  try {
+    await assertSafeTargetCached(baseUrl);
+  } catch (e) {
+    recordAiFailure({ stage: 'ssrf_guard', error: e.message || String(e) });
+    console.error('[ClawVault] AI 目标地址未通过 SSRF 校验，跳过本次分类:', e.message || e);
+    return { category: '未分类', sub: '' };
+  }
 
   const url = `${baseUrl.replace(/\/$/, '')}/v1/messages`;
   try {

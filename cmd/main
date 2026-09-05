@@ -93,11 +93,31 @@ die() {
 
 # 旧版曾把数据写在 /vol1/@appdata/clawvault；迁移到 @appshare 后该目录成为孤儿残留
 # （含旧 .clvkey 等密钥，属泄露面）。仅在「当前活跃数据目录不是它」时才清理，避免误删活跃数据。
+# SEC-07：只在 start 时尝试一次（原来在顶层，fnOS 频繁轮询 status 也会触发，
+# 且 rm 前无条件打日志——父目录 root:root 755 时包用户删不掉，每次调用刷一条，
+# 真机曾刷出 3592 条无意义日志）。现在：静默尝试，成功才记日志。
 LEGACY_DIR="/vol1/@appdata/clawvault"
-if [ "$DATA_SHARE" != "$LEGACY_DIR" ] && [ -d "$LEGACY_DIR" ]; then
-  log "检测到旧数据残留 $LEGACY_DIR（已迁移至 $DATA_SHARE），清理以去除旧密钥泄露面..."
-  rm -rf "$LEGACY_DIR" 2>/dev/null || true
-fi
+cleanup_legacy() {
+  [ "$DATA_SHARE" != "$LEGACY_DIR" ] || return 0
+  [ -d "$LEGACY_DIR" ] || return 0
+  if rm -rf "$LEGACY_DIR" 2>/dev/null; then
+    log "已清理旧数据残留 $LEGACY_DIR（含旧密钥，去除泄露面）"
+  fi
+  return 0
+}
+
+# SEC-06：main.log 轮转。真机曾长到 892KB 无轮转，排障时 tail 全是无效历史。
+# 启动时若超过 1MB 则滚动一代（保留 .1/.2 两代历史），在写任何新日志前执行。
+rotate_log() {
+  [ -f "$LOG_FILE" ] || return 0
+  local sz
+  sz=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+  if [ "${sz:-0}" -gt 1048576 ]; then
+    if [ -f "$LOG_FILE.1" ]; then mv -f "$LOG_FILE.1" "$LOG_FILE.2" 2>/dev/null || true; fi
+    mv -f "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null || true
+  fi
+  return 0
+}
 
 is_running() {
   [ -f "$PID_FILE" ] || return 1
@@ -125,6 +145,8 @@ ensure_sqlite3() {
 
 case "${1:-}" in
   start)
+    rotate_log
+    cleanup_legacy
     if is_running; then
       log "ClawVault v$PKG_VER 已在运行 (pid $(cat "$PID_FILE" 2>/dev/null))"
       exit 0

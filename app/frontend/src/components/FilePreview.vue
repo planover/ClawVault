@@ -105,6 +105,10 @@ const sizeText = computed(() => (info.value ? formatSize(info.value.size) : ''))
 
 async function loadInfo() {
   info.value = null;
+  // UI-L3：compact（列表卡片内）只用 message.filename 渲染一行芯片，
+  // 不需要大小/MIME/正文/压缩包清单——跳过全部网络调用，
+  // 列表里有 20 个文件卡片就少 20 次详情接口请求。
+  if (props.compact) return;
   infoError.value = false;
   textContent.value = '';
   textError.value = false;
@@ -191,7 +195,7 @@ watch(id, loadInfo);
         </div>
         <div class="fp-acts">
           <button
-            v-if="inHost"
+            v-if="inHost && !compact"
             class="fp-act"
             title="在飞牛文件管理器中打开（可用系统已装应用打开）"
             aria-label="在飞牛文件管理器中打开"
@@ -208,8 +212,8 @@ watch(id, loadInfo);
         </div>
       </div>
 
-      <!-- 在线预览区 -->
-      <div v-if="previewKind !== 'unsupported'" class="fp-body">
+      <!-- 在线预览区（compact 列表卡片只显示头部一行，不渲染预览体） -->
+      <div v-if="!compact && previewKind !== 'unsupported'" class="fp-body">
         <img
           v-if="previewKind === 'image' && !imageFailed"
           class="fp-img"
@@ -267,8 +271,8 @@ watch(id, loadInfo);
         </div>
       </div>
 
-      <!-- 不支持预览：明确提示 + 下载 / 外部打开 -->
-      <div v-else class="fp-unsupported">
+      <!-- 不支持预览：明确提示 + 下载 / 外部打开（compact 同样不渲染） -->
+      <div v-else-if="!compact" class="fp-unsupported">
         <Icon name="file" :size="20" />
         <div class="fp-unsupported-text">
           <span>当前暂不支持在应用内直接预览该格式（.{{ ext || '未知' }}）。</span>

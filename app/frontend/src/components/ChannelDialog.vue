@@ -2,10 +2,15 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import { api } from '../api.js';
 import { toast } from '../toast.js';
+import { useDialogA11y } from '../dialogA11y.js';
 import Icon from './Icon.vue';
 
 const props = defineProps({ show: Boolean, channels: Array, credentialError: Boolean });
 const emit = defineEmits(['close', 'changed']);
+
+// UI-M1：Esc 关闭 + 打开时焦点入窗 + 关闭时焦点还原
+const dialogRoot = ref(null);
+useDialogA11y(() => props.show, () => emit('close'), dialogRoot);
 
 const providers = ref([]);
 const selProvider = ref('wechat_ilink');
@@ -155,7 +160,7 @@ function close() {
 </script>
 
 <template>
-  <div v-if="show" class="modal-mask" @click.self="close">
+  <div v-if="show" ref="dialogRoot" class="modal-mask" role="dialog" aria-modal="true" @click.self="close">
     <div class="modal wide">
       <h3>通道管理</h3>
       <p class="modal-sub">接入一个或多个 Bot，消息会被自动归档到 NAS。</p>

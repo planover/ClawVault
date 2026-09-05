@@ -1,3 +1,22 @@
 #!/bin/sh
-# ClawVault fnOS 生命周期钩子: upgrade_callback（当前未使用，保留为 no-op 兼容 fnpack 标准接口）
+# ClawVault fnOS 生命周期钩子: upgrade_callback
+#
+# 升级时 fnOS 会以包用户重新解包覆盖应用目录（属主/权限回到 clawvault 可写），
+# 因此 SEC-03 的程序目录只读化必须在每次升级后重做——逻辑与 install_callback 一致。
+set -e
+
+APP_DIR="${TRIM_APPDEST:-/vol1/@appcenter/clawvault}"
+
+if [ "$(id -u)" = "0" ] && [ -d "$APP_DIR" ]; then
+  for p in backend runtime ui cmd config wizard manifest ICON.PNG ICON_256.PNG docker-compose.yml; do
+    if [ -e "$APP_DIR/$p" ]; then
+      chown -R root:root "$APP_DIR/$p" 2>/dev/null || true
+      chmod -R go-w "$APP_DIR/$p" 2>/dev/null || true
+    fi
+  done
+  chmod 755 "$APP_DIR/cmd/main" 2>/dev/null || true
+  echo "ClawVault: 升级后程序目录已重新只读化（root 所有，clawvault 只读执行）"
+else
+  echo "ClawVault: upgrade_callback 非 root 环境，跳过程序目录只读化" >&2
+fi
 exit 0

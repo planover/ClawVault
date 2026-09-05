@@ -127,6 +127,12 @@ export const api = {
 let reconnectTimer = null;
 let wsClosedByUser = false;
 
+// UI-M3：WS 连接状态（connecting / online / offline），UI 据此显示断连横幅。
+// 用 Vue ref 让组件直接响应式订阅；api.js 本身不依赖 Vue 运行时亦可工作
+// （ref 只是普通响应式对象，非组件上下文）。
+import { ref } from 'vue';
+export const wsState = ref('connecting');
+
 export function connectWS(onEvent) {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
@@ -143,6 +149,7 @@ export function connectWS(onEvent) {
     }
   };
   ws.onopen = () => {
+    wsState.value = 'online';
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -150,6 +157,7 @@ export function connectWS(onEvent) {
   };
   ws.onclose = () => {
     if (wsClosedByUser) return;
+    wsState.value = 'offline';
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => connectWS(onEvent), 3000);
   };

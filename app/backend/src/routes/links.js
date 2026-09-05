@@ -88,7 +88,7 @@ export default function createLinksRouter({ storage, ws } = {}) {
 
   // 手动「重新抓取」：用已存记录里的 url 重新抓一次（url 来自库，且会再次过 SSRF 校验，
   // 不能被用于抓取任意新地址）。更新同一行并广播，前端详情面板就地刷新。
-  // 走网关身份鉴权（生产态无网关头即 401）；不要求管理员——只是重抓已归档的链接。
+  // SEC-11：会触发出网抓取，属写操作，index.js 的写门禁要求管理员（生产态）。
   r.post('/:id/refetch', async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });

@@ -6,6 +6,8 @@ import ExcelJS from 'exceljs';
 import { decryptIlink, detectMediaExt } from './ilink_crypto.js';
 import { transcodeVoice } from './voice_transcode.js';
 import { isPureEmojiText } from './wechatEmoji.js';
+import { assertPublicUrl } from './ssrf.js';
+import { downloadToBuffer } from './netguard.js';
 
 // LIKE 通配符转义：用户输入的 % 与 _ 必须转义，否则搜索「100%」会退化成全表匹配。
 // 转义符统一用反斜杠，并在 SQL 侧声明 ESCAPE '\'。
@@ -113,6 +115,14 @@ export class Storage {
     }
     // 按通道串行化 聊天.xlsx 的追加写，避免同一通道并发读写导致丢行/损坏
     this._chatQueue = new Map();
+  }
+
+  // FUN-4：数据库一致性快照。库运行在 WAL 模式，直接拷贝 archive.db 会丢掉
+  // 未 checkpoint 的 -wal 内容；better-sqlite3 的 backup() 走 SQLite 在线备份 API，
+  // 备份期间不阻塞正常读写，落出的是一个完整自包含的 db 文件（无需 -wal/-shm）。
+  async backup(destPath) {
+    await this.db.backup(destPath);
+    return destPath;
   }
 
   static isChat(kind) {
@@ -338,6 +348,17 @@ export class Storage {
     return row ? this._map(row) : null;
   }
 
+  // 下载外部媒体（SEC-02）。
+  // media.url 来自 provider 归一化结果，可能是攻击者可控的值。此前这里直接
+  // `fetch(media.url)`：既无 SSRF 校验（可打 169.254.169.254 云元数据 / 内网服务），
+  // 也无超时与体积上限，而抓取到的内容会落盘并可通过 /api/media/:id 读回来——
+  // 等于一个**带响应回显**的 SSRF。这里统一走 netguard：先校验目标、钉住解析结果
+  // （防 DNS Rebinding），再限时限量下载。
+  async _downloadMedia(url) {
+    await assertPublicUrl(url);
+    return downloadToBuffer(url, { timeoutMs: 30000, maxBytes: 64 * 1024 * 1024 });
+  }
+
   // 保存语音音频：下载/解密/转码后写入 [通道]/语音/<时间戳>.<ext>，返回相对归档根路径（或原 URL）。
   // media: { url?: string, buffer?: Buffer, ext?: string, aesKey?: string }
   // iLink 加密语音做 AES-128-ECB 解密；对 SILK/AMR 等浏览器不支持的格式转码为 MP3/WAV。
@@ -350,9 +371,7 @@ export class Storage {
       let buf;
       if (media.buffer) buf = media.buffer;
       else if (media.url) {
-        const res = await fetch(media.url);
-        if (!res.ok) throw new Error(`下载音频失败 ${res.status}`);
-        buf = Buffer.from(await res.arrayBuffer());
+        buf = await this._downloadMedia(media.url);
       } else return '';
       // iLink 加密语音：AES-128-ECB 解密（已是音频头则跳过，兼容明文来源）
       if (media.aesKey && !isMediaHeader(buf)) buf = decryptIlink(buf, media.aesKey);
@@ -625,9 +644,8 @@ export class Storage {
       if (media.buffer) {
         buf = media.buffer;
       } else if (media.url) {
-        const res = await fetch(media.url);
-        if (!res.ok) throw new Error(`下载媒体失败 ${res.status}`);
-        buf = Buffer.from(await res.arrayBuffer());
+        // SEC-02：走 netguard 的校验 + 钉 IP + 限时限量下载（原先是裸 fetch）
+        buf = await this._downloadMedia(media.url);
       } else {
         return '';
       }

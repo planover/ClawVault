@@ -23,8 +23,10 @@
   --c-border-strong: #d8dce4;
   --c-text: #101828;
   --c-text-2: #475467;
-  --c-muted: #7b8494;
-  --c-faint: #98a2b3;
+  /* UI-M2：次要文字对比度提到 AA（白底 ≥4.5:1）。
+     原 --c-muted #7b8494 ≈3.8:1、--c-faint #98a2b3 ≈2.5:1，小字号（11-12px）下不达标。 */
+  --c-muted: #667085; /* ≈5.0:1 */
+  --c-faint: #6b7686; /* ≈4.6:1 */
 
   /* 语义色 */
   --c-success: #12805c;
@@ -85,8 +87,9 @@
   --c-border-strong: #343a45;
   --c-text: #e9ecf1;
   --c-text-2: #a9b2c0;
-  --c-muted: #8994a5;
-  --c-faint: #6b7686;
+  /* UI-M2：深色下 --c-faint #6b7686 在 --c-surface #14171d 上仅 ≈3.9:1，不达 AA，提亮 */
+  --c-muted: #98a3b4; /* ≈6.9:1 */
+  --c-faint: #7e899b; /* ≈5.1:1 */
 
   --c-success: #4ade80;
   --c-success-bg: #12291f;

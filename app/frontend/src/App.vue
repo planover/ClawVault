@@ -1,14 +1,13 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
-import { api, connectWS, apiUrl } from './api.js';
+import { api, connectWS, apiUrl, wsState } from './api.js';
 import { setWindowTitle } from './fnos.js';
 import { toast } from './toast.js';
 import Icon from './components/Icon.vue';
-import { renderEmojiText } from './wechatEmoji.js';
 import FolderTree from './components/FolderTree.vue';
 import MessageList from './components/MessageList.vue';
 import Lightbox from './components/Lightbox.vue';
-import FilePreview from './components/FilePreview.vue';
+import DetailPanel from './components/DetailPanel.vue';
 import ChannelDialog from './components/ChannelDialog.vue';
 import SettingsDialog from './components/SettingsDialog.vue';
 import AboutDialog from './components/AboutDialog.vue';
@@ -22,36 +21,12 @@ const messages = ref([]);
 const filter = reactive({ channelName: '', category: '', sub: '', kind: '', q: '' });
 const selectedId = ref(null);
 const selectedMessage = ref(null);
-const linkSnapshots = ref([]); // 选中消息关联的「收藏网址」快照
-const refetchingId = ref(null); // 正在重新抓取的快照 id（同一个时刻只允许一个，避免并发压测外部站点）
 const showChannels = ref(false);
 const showSettings = ref(false);
 const showAbout = ref(false);
-const lightbox = reactive({ show: false, ids: [], index: 0 });
-const detailImgFailed = ref(false);
-const newCat = ref('');
-const newCatNew = ref(''); // 「＋ 新建分类…」时输入的新名字
-const newSub = ref('');
-
-// 实际提交到后端的主分类：选了已有就直接用；选了「新建」则用输入框内容
-const finalCat = computed(() =>
-  newCat.value === '__new__' ? newCatNew.value.trim() : newCat.value.trim(),
-);
-// 「＋ 新建分类…」时主分类必填；否则有选项即可
-const canSaveReclass = computed(() =>
-  newCat.value === '__new__' ? !!newCatNew.value.trim() : !!newCat.value,
-);
-// 当前主分类下已有的子分类，给子分类输入框做候选（datalist 仍可手输入新子分类）
-const subOptions = computed(() => {
-  const c = newCat.value;
-  if (!c || c === '__new__') return [];
-  for (const ch of folders.value) {
-    for (const cc of ch.categories || []) {
-      if (cc.name === c) return (cc.subs || []).map((s) => s.name).sort();
-    }
-  }
-  return [];
-});
+// UI-L1：灯箱支持两种源——消息媒体 id 序列（ids）或任意 URL 序列（srcs，如快照截图）
+const lightbox = reactive({ show: false, ids: [], srcs: [], index: 0 });
+const detailPanel = ref(null); // DetailPanel 实例（转发 WS 快照/删除事件用）
 
 // ---- 主题：模式（跟随系统 / 浅色 / 深色）+ 风格，均持久化 ----
 // 风格：default（默认）/ ios-classic（iOS 经典）/ ios27（iOS 27 强玻璃质感），
@@ -111,8 +86,14 @@ applyTheme(); // 尽早应用，避免首屏闪白/闪黑
 
 // ---- 列表加载 ----
 const PAGE = 30;
+// UI-F3：列表 DOM 上限。无限滚动每翻一页就往 DOM 追加 30 个卡片，
+// 千条规模下节点数爆炸、滚动掉帧。到达上限后停止翻页并提示改用搜索/筛选。
+const MAX_RENDERED = 300;
+const capped = ref(false);
 const loading = ref(false); // 首屏 / 重新筛选
 const loadingMore = ref(false); // 追加下一页
+// UI-F2：加载失败要有明确的错误态（此前失败只弹 toast，列表区显示「空」，像真的没数据）
+const loadError = ref('');
 const total = ref(0);
 const offset = ref(0);
 const hasMore = computed(() => messages.value.length < total.value);
@@ -147,13 +128,6 @@ const emptyText = computed(() => {
   return '这里还没有归档内容';
 });
 
-// 已有分类：给「重新分类」输入框做候选提示，避免手打出错
-const categoryOptions = computed(() => {
-  const set = new Set();
-  for (const ch of folders.value) for (const c of ch.categories || []) set.add(c.name);
-  return [...set].sort();
-});
-
 // 归档总量：从分类树汇总得出，无需额外请求。
 // 侧栏「全部消息」用它，而列表标题旁的 total 是当前筛选结果数，两者不能混用。
 const totalAll = computed(() =>
@@ -171,6 +145,7 @@ function channelIdByName(name) {
 async function loadMessages(reset = true) {
   if (reset) {
     offset.value = 0;
+    capped.value = false;
     loading.value = true;
   } else {
     loadingMore.value = true;
@@ -188,8 +163,10 @@ async function loadMessages(reset = true) {
     const r = await api.listMessages(q);
     total.value = r.total;
     messages.value = reset ? r.items : messages.value.concat(r.items);
+    loadError.value = '';
   } catch (e) {
-    toast.error('消息加载失败：' + (e.message || e));
+    // UI-F2：失败时保留已有列表，错误态内联展示（含重试入口），不再伪装成「空列表」
+    loadError.value = '消息加载失败：' + (e.message || e);
   } finally {
     loading.value = false;
     loadingMore.value = false;
@@ -198,6 +175,10 @@ async function loadMessages(reset = true) {
 
 function loadMore() {
   if (loadingMore.value || !hasMore.value) return;
+  if (messages.value.length >= MAX_RENDERED) {
+    capped.value = true;
+    return;
+  }
   offset.value += PAGE;
   loadMessages(false);
 }
@@ -246,62 +227,21 @@ function onSelectKind(k) {
 function onSelectMessage(id) {
   selectedId.value = id;
   selectedMessage.value = messages.value.find((m) => m.id === id) || null;
-  newCat.value = selectedMessage.value?.category || '';
-  newCatNew.value = '';
-  newSub.value = selectedMessage.value?.sub || '';
-  detailImgFailed.value = false;
   showDetail.value = true;
-  loadLinkSnapshots(id);
-}
-
-// 拉取某条消息关联的网址快照（详情面板展示；纯文本/语音之外的消息不会有关联快照，静默返回空）
-async function loadLinkSnapshots(messageId) {
-  if (!messageId) {
-    linkSnapshots.value = [];
-    return;
-  }
-  try {
-    const r = await api.messageLinks(messageId);
-    linkSnapshots.value = r.items || [];
-  } catch {
-    linkSnapshots.value = [];
-  }
-}
-
-// 手动「重新抓取」：真机联网前抓取会失败，联网（或配好代理）后点这个按钮即可补抓。
-// 后端用同一 id 更新行并广播，这里本地也直接替换该快照，保证即时反馈。
-async function refetchLink(id) {
-  if (refetchingId.value) return;
-  refetchingId.value = id;
-  try {
-    const updated = await api.refetchLink(id);
-    const idx = linkSnapshots.value.findIndex((s) => s.id === id);
-    if (idx >= 0) {
-      const arr = linkSnapshots.value.slice();
-      arr[idx] = updated;
-      linkSnapshots.value = arr;
-    }
-    if (updated.status === 'fetch_failed') {
-      toast.warning('重新抓取仍失败：' + (updated.error || '未知错误'));
-    } else {
-      toast.success('已重新抓取');
-    }
-  } catch (e) {
-    toast.error('重新抓取失败：' + (e.message || e));
-  } finally {
-    refetchingId.value = null;
-  }
 }
 
 // 图片灯箱：从列表或详情打开，统一用「当前筛选下的图片 id 序列」便于左右切换
 function onOpenLightbox({ ids, index }) {
   lightbox.ids = ids && ids.length ? ids : [];
+  lightbox.srcs = [];
   lightbox.index = index || 0;
   lightbox.show = true;
 }
-function openLightboxSingle(id) {
-  lightbox.ids = [id];
-  lightbox.index = 0;
+// UI-L1：任意 URL 源灯箱（网址快照截图等没有消息媒体 id 的图片）
+function onOpenLightboxSrcs({ srcs, index }) {
+  lightbox.ids = [];
+  lightbox.srcs = srcs && srcs.length ? srcs : [];
+  lightbox.index = index || 0;
   lightbox.show = true;
 }
 function closeLightbox() {
@@ -314,39 +254,55 @@ function toggleSide() {
   showSide.value = !showSide.value;
 }
 
-async function doReclassify() {
-  if (!selectedMessage.value || !canSaveReclass.value) return;
-  try {
-    const updated = await api.reclassify(selectedMessage.value.id, finalCat.value, newSub.value.trim());
-    selectedMessage.value = updated;
-    // 选过「新建」后，把新分类正式设为已选，下次重新分类直接选到它
-    if (newCat.value === '__new__') newCat.value = newCatNew.value.trim();
-    newCatNew.value = '';
-    await Promise.all([loadMessages(true), loadFolders()]);
-    toast.success('已重新分类');
-  } catch (e) {
-    toast.error('重新分类失败：' + (e.message || e));
-  }
+// 详情面板重新分类成功：同步选中消息并刷新列表与分类树
+async function onReclassified(updated) {
+  if (updated && selectedMessage.value?.id === updated.id) selectedMessage.value = updated;
+  await Promise.all([loadMessages(true), loadFolders()]);
 }
 
+// UI-M6：删除改为「乐观移除 + 5 秒撤销窗口」。
+// 此前的「二次确认」只能在误点前拦截，误确认后无法挽回；现在点击删除立即从列表移除，
+// toast 提供 5 秒撤销，倒计时结束才真正调后端删除接口（后端删除会连带清理归档文件，不可恢复）。
 async function doDelete(id) {
   if (busyDelete.value) return;
-  busyDelete.value = true;
-  try {
-    const r = await api.deleteMessage(id);
-    if (selectedMessage.value?.id === id) {
-      selectedMessage.value = null;
-      selectedId.value = null;
-      showDetail.value = false;
-    }
-    await Promise.all([loadMessages(true), loadFolders(), loadChats()]);
-    const extra = r?.removedFiles ? `，清理了 ${r.removedFiles} 个归档文件` : '';
-    toast.success(`已删除${extra}`);
-  } catch (e) {
-    toast.error('删除失败：' + (e.message || e));
-  } finally {
-    busyDelete.value = false;
+  const idx = messages.value.findIndex((m) => m.id === id);
+  const backup = idx >= 0 ? messages.value[idx] : null;
+  if (idx >= 0) {
+    messages.value = messages.value.filter((m) => m.id !== id);
+    total.value = Math.max(0, total.value - 1);
   }
+  if (selectedMessage.value?.id === id) {
+    selectedMessage.value = null;
+    selectedId.value = null;
+    showDetail.value = false;
+  }
+  let undone = false;
+  const restore = () => {
+    if (!backup) return;
+    const arr = messages.value.slice();
+    arr.splice(Math.min(idx, arr.length), 0, backup);
+    messages.value = arr;
+    total.value += 1;
+  };
+  toast.action('已删除，5 秒内可撤销', '撤销', () => {
+    undone = true;
+    restore();
+  }, 5000);
+  setTimeout(async () => {
+    if (undone) return;
+    busyDelete.value = true;
+    try {
+      const r = await api.deleteMessage(id);
+      await Promise.all([loadFolders(), loadChats()]);
+      const extra = r?.removedFiles ? `，清理了 ${r.removedFiles} 个归档文件` : '';
+      toast.success(`已删除${extra}`);
+    } catch (e) {
+      restore();
+      toast.error('删除失败：' + (e.message || e));
+    } finally {
+      busyDelete.value = false;
+    }
+  }, 5200);
 }
 
 // ---- 实时推送 ----
@@ -368,32 +324,18 @@ function onWSEvent(e) {
     loadFolders();
     if (selectedMessage.value && e.record.id === selectedMessage.value.id) {
       selectedMessage.value = e.record;
-      newCat.value = e.record.category;
-      newSub.value = e.record.sub;
     }
   } else if (e.type === 'delete') {
     if (selectedMessage.value?.id === e.id) {
       selectedMessage.value = null;
       selectedId.value = null;
-      linkSnapshots.value = [];
     }
+    detailPanel.value?.onDeleted(e.id);
     loadMessages(true);
     loadFolders();
   } else if (e.type === 'link_snapshot') {
-    // 抓取是异步的：消息已入库，几秒后快照才落库并通过 WS 推来。
-    // 仅当正看着对应消息时处理，避免无关的快照刷新整个列表。
-    // 同 id 视为「重新抓取」的就地更新；新 id 则追加。
-    if (selectedMessage.value && e.record?.messageId === selectedMessage.value.id && e.record?.snapshot) {
-      const snap = e.record.snapshot;
-      const idx = linkSnapshots.value.findIndex((s) => s.id === snap.id);
-      if (idx >= 0) {
-        const arr = linkSnapshots.value.slice();
-        arr[idx] = snap;
-        linkSnapshots.value = arr;
-      } else {
-        linkSnapshots.value = [...linkSnapshots.value, snap];
-      }
-    }
+    // 抓取是异步的：消息已入库，几秒后快照才落库并通过 WS 推来，转发给详情面板就地更新
+    detailPanel.value?.onLinkSnapshot(e.record);
   } else if (e.type === 'channels') {
     channels.value = e.channels;
   }
@@ -426,7 +368,7 @@ async function loadFolders() {
   }
 }
 
-// Esc：移动端关闭浮层
+// Esc：移动端关闭浮层（弹窗与灯箱各自处理自己的 Esc——弹窗用捕获阶段拦截，不会冒泡到这里）
 function onKeydown(e) {
   if (e.key !== 'Escape') return;
   if (showSide.value) showSide.value = false;
@@ -499,6 +441,11 @@ watch(selectedMessage, (v) => {
       </button>
     </header>
 
+    <!-- UI-M3：WS 断连可见提示（此前断连后界面一切如常，只是数据悄悄不再更新） -->
+    <div v-if="wsState === 'offline'" class="ws-banner" role="alert">
+      <Icon name="alert" :size="14" /> 实时连接已断开，正在自动重连…
+    </div>
+
     <div class="body">
       <div v-if="showSide" class="side-mask" @click="showSide = false"></div>
 
@@ -563,6 +510,12 @@ watch(selectedMessage, (v) => {
         </div>
 
         <div class="list-wrap">
+          <!-- UI-F2：加载失败内联错误条（含重试），不再被误显为「空列表」 -->
+          <div v-if="loadError" class="load-error" role="alert">
+            <Icon name="alert" :size="15" />
+            <span class="load-error-msg">{{ loadError }}</span>
+            <button class="btn ghost sm" @click="refresh">重试</button>
+          </div>
           <div v-if="loading" class="skeletons" aria-hidden="true">
             <div v-for="i in 6" :key="i" class="skeleton-card">
               <div class="sk-line w30"></div>
@@ -571,7 +524,7 @@ watch(selectedMessage, (v) => {
             </div>
           </div>
           <MessageList
-            v-else
+            v-else-if="messages.length || !loadError"
             :messages="messages"
             :selectedId="selectedId"
             :emptyText="emptyText"
@@ -582,137 +535,24 @@ watch(selectedMessage, (v) => {
             @open-lightbox="onOpenLightbox"
           />
           <div v-if="loadingMore" class="more-state"><span class="spinner"></span> 加载中…</div>
+          <!-- UI-F3：到达 DOM 上限的提示，引导改用搜索/筛选而不是无限翻页 -->
+          <div v-else-if="capped" class="more-state">
+            已显示前 {{ MAX_RENDERED }} 条。结果较多，请用搜索或筛选缩小范围。
+          </div>
         </div>
       </main>
 
-      <section class="detail" :class="{ open: showDetail }">
-        <button class="icon-btn sm detail-close" aria-label="关闭详情" @click="closeDetail">
-          <Icon name="close" :size="16" />
-        </button>
-
-        <div v-if="selectedMessage" class="detail-inner">
-          <div class="detail-head">
-            <span class="tag">{{ selectedMessage.category }}<template v-if="selectedMessage.sub"> / {{ selectedMessage.sub }}</template></span>
-            <h3 class="detail-meta truncate">{{ selectedMessage.channelName }}</h3>
-            <span class="detail-time">{{ new Date(selectedMessage.ts).toLocaleString('zh-CN') }}</span>
-          </div>
-
-          <p
-            v-if="selectedMessage.text"
-            class="detail-text"
-            :class="{ 'detail-text-emoji': selectedMessage.kind === 'emoji' }"
-            v-html="renderEmojiText(selectedMessage.text)"
-          ></p>
-
-          <div v-if="(selectedMessage.kind === 'image' || selectedMessage.kind === 'sticker') && selectedMessage.media" class="block">
-            <div class="section-label">图片</div>
-            <img
-              v-if="!detailImgFailed"
-              class="detail-img clickable"
-              :src="api.thumbUrl(selectedMessage.id, 800)"
-              alt="图片"
-              @error="detailImgFailed = true"
-              @click="openLightboxSingle(selectedMessage.id)"
-            />
-            <div v-else class="media-missing"><Icon name="alert" :size="15" /> 媒体加载失败</div>
-          </div>
-
-          <div v-else-if="selectedMessage.kind === 'video' && selectedMessage.media" class="block">
-            <div class="section-label">视频</div>
-            <video class="detail-img" controls :src="api.mediaUrl(selectedMessage.id)"></video>
-          </div>
-
-          <div v-else-if="selectedMessage.kind === 'file' && selectedMessage.media" class="block">
-            <div class="section-label">文件</div>
-            <FilePreview :message="selectedMessage" @open-lightbox="onOpenLightbox" />
-          </div>
-
-          <div v-else-if="['image', 'video', 'file', 'sticker'].includes(selectedMessage.kind) && !selectedMessage.media" class="block">
-            <div class="media-missing"><Icon name="alert" :size="15" /> 该媒体未保存（旧版本或接收时缺失）</div>
-          </div>
-
-          <div v-if="selectedMessage.voice" class="block">
-            <div class="section-label">语音</div>
-            <audio class="detail-audio" controls :src="api.voiceUrl(selectedMessage.id)"></audio>
-          </div>
-
-          <div v-if="selectedMessage.peer" class="block">
-            <div class="section-label">会话对象</div>
-            <div class="detail-peer">{{ selectedMessage.peer }}</div>
-          </div>
-
-          <div v-if="linkSnapshots.length" class="block link-snap">
-            <div class="section-label">网址快照</div>
-            <div v-for="s in linkSnapshots" :key="s.id" class="snap-card">
-              <div class="snap-head">
-                <a class="snap-title" :href="api.linkHtmlUrl(s.id)" target="_blank" rel="noopener">{{ s.title || s.url }}</a>
-                <span class="snap-domain">{{ s.domain || s.url }}</span>
-              </div>
-              <div v-if="s.status === 'fetch_failed'" class="snap-fail">
-                <Icon name="alert" :size="15" />
-                <div class="snap-fail-body">
-                  <strong>抓取失败</strong>
-                  <span class="snap-fail-msg">{{ s.error || '未能获取该网页，真机可能尚未联网或被代理/防火墙拦截。联网后再点「重新抓取」。' }}</span>
-                </div>
-              </div>
-              <img v-if="s.cover_path" class="snap-cover" :src="api.linkCoverUrl(s.id)" alt="封面" loading="lazy" decoding="async" />
-              <p v-if="s.description" class="snap-desc">{{ s.description }}</p>
-              <img v-if="s.screenshot_path" class="snap-shot" :src="api.linkScreenshotUrl(s.id)" alt="网页截图" loading="lazy" decoding="async" />
-              <div v-else-if="s.status !== 'fetch_failed'" class="snap-noshot"><Icon name="image" :size="13" /> 截图不可用（未安装浏览器）</div>
-              <div class="snap-actions">
-                <a class="btn ghost sm" :href="api.linkHtmlUrl(s.id)" target="_blank" rel="noopener"><Icon name="external" :size="13" /> 查看归档</a>
-                <a class="btn ghost sm" :href="s.url" target="_blank" rel="noopener"><Icon name="arrowRight" :size="13" /> 打开原网址</a>
-                <button class="btn ghost sm" :disabled="refetchingId === s.id" @click="refetchLink(s.id)">
-                  <Icon name="refresh" :size="13" />
-                  <span v-if="refetchingId === s.id" class="spinner-sm"></span>
-                  {{ refetchingId === s.id ? '抓取中…' : '重新抓取' }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="block reclass">
-            <div class="section-label">重新分类</div>
-            <div class="reclass-fields">
-              <select class="input" v-model="newCat" aria-label="主分类">
-                <option value="">— 选择已有分类 —</option>
-                <option v-for="c in categoryOptions" :key="c" :value="c">{{ c }}</option>
-                <option value="__new__">＋ 新建分类…</option>
-              </select>
-              <input
-                v-if="newCat === '__new__'"
-                class="input"
-                v-model="newCatNew"
-                placeholder="新分类名称"
-                aria-label="新分类名称"
-              />
-              <input
-                class="input"
-                v-model="newSub"
-                list="cv-subs"
-                placeholder="子分类（可选）"
-                aria-label="子分类"
-              />
-              <datalist id="cv-subs">
-                <option v-for="s in subOptions" :key="s" :value="s"></option>
-              </datalist>
-              <button class="btn sm" :disabled="!canSaveReclass" @click="doReclassify">保存</button>
-            </div>
-          </div>
-
-          <div class="detail-actions">
-            <button class="btn ghost sm" @click="doDelete(selectedMessage.id)">
-              <Icon name="trash" :size="14" /> 删除这条归档
-            </button>
-          </div>
-        </div>
-
-        <div v-else class="detail-empty">
-          <Icon name="empty" :size="34" />
-          <p class="detail-empty-title">未选择消息</p>
-          <p class="muted small">从左侧分类或右侧列表中选一条，这里会显示完整内容、媒体与重新分类入口。</p>
-        </div>
-      </section>
+      <DetailPanel
+        ref="detailPanel"
+        :message="selectedMessage"
+        :show="showDetail"
+        :folders="folders"
+        @close="closeDetail"
+        @delete="doDelete"
+        @reclassified="onReclassified"
+        @open-lightbox="onOpenLightbox"
+        @open-lightbox-srcs="onOpenLightboxSrcs"
+      />
     </div>
 
     <ChannelDialog :show="showChannels" :channels="channels" :credential-error="credError" @close="showChannels = false" @changed="onChannelsChanged" />
@@ -729,6 +569,7 @@ watch(selectedMessage, (v) => {
     <Lightbox
       :show="lightbox.show"
       :ids="lightbox.ids"
+      :srcs="lightbox.srcs"
       v-model:index="lightbox.index"
       @close="closeLightbox"
     />
@@ -845,6 +686,21 @@ watch(selectedMessage, (v) => {
 
 .hamburger {
   display: none;
+}
+
+/* ---------- UI-M3：WS 断连横幅 ---------- */
+.ws-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 12px;
+  background: var(--c-warn-bg);
+  color: var(--c-warn);
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--c-border);
+  z-index: 29;
 }
 
 /* ---------- 主体三栏 ---------- */
@@ -1006,6 +862,25 @@ watch(selectedMessage, (v) => {
   color: var(--c-muted);
 }
 
+/* UI-F2：列表加载失败错误条 */
+.load-error {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--c-danger-bg);
+  border: 1px solid var(--c-danger-border);
+  color: var(--c-danger);
+  font-size: 12.5px;
+}
+.load-error-msg {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* 骨架屏 */
 .skeletons {
   display: grid;
@@ -1037,315 +912,28 @@ watch(selectedMessage, (v) => {
   width: 90%;
 }
 
-/* ---------- 详情面板 ---------- */
-.detail {
-  width: var(--detail-w);
-  flex-shrink: 0;
-  border-left: 1px solid var(--c-border);
-  background: var(--c-surface);
-  overflow-y: auto;
-  position: relative;
-  padding: 18px;
-}
-.detail-inner {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-.detail-close {
-  display: none;
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 2;
-}
-.detail-head {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-right: 8px;
-}
-.detail-meta {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-.detail-time,
-.detail-peer {
-  font-size: 12px;
-  color: var(--c-muted);
-}
-.detail-text {
-  margin: 0;
-  font-size: 13.5px;
-  line-height: 1.7;
-  color: var(--c-text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.detail-text-emoji {
-  font-size: 40px;
-  line-height: 1.4;
-  letter-spacing: 4px;
-}
-.block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.detail-img {
-  width: 100%;
-  max-height: 340px;
-  object-fit: contain;
-  border-radius: var(--r-md);
-  border: 1px solid var(--c-border);
-  background: var(--c-surface-2);
-}
-.detail-img.clickable {
-  cursor: zoom-in;
-  transition: filter var(--t-fast);
-}
-.detail-img.clickable:hover {
-  filter: brightness(0.96);
-}
-.detail-audio {
-  width: 100%;
-}
-.file-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--c-border-strong);
-  border-radius: var(--r-md);
-  font-size: 13px;
-  color: var(--c-text);
-  transition: background var(--t-fast), border-color var(--t-fast);
-}
-.file-chip:hover {
-  background: var(--c-hover);
-  border-color: var(--c-primary);
-  text-decoration: none;
-}
-.media-missing {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 10px 12px;
-  border-radius: var(--r-md);
-  background: var(--c-warn-bg);
-  color: var(--c-warn);
-  font-size: 12.5px;
-}
-/* 网址快照卡片 */
-.link-snap {
-  gap: 10px;
-}
-.snap-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-md);
-  background: var(--c-surface-2);
-}
-.snap-head {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.snap-title {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--c-text);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-.snap-title:hover {
-  color: var(--c-primary);
-  text-decoration: underline;
-}
-.snap-domain {
-  font-size: 11.5px;
-  color: var(--c-faint);
-  overflow-wrap: anywhere;
-  word-break: break-all;
-}
-.snap-cover {
-  display: block;
-  width: 100%;
-  max-height: 200px;
-  object-fit: contain;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--c-border);
-  background: var(--c-surface);
-}
-.snap-shot {
-  display: block;
-  width: 100%;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--c-border);
-  background: var(--c-surface);
-  cursor: zoom-in;
-}
-.snap-desc {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--c-text-2);
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.snap-noshot {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: var(--r-sm);
-  background: var(--c-surface-3);
-  color: var(--c-faint);
-  font-size: 11.5px;
-}
-/* 抓取失败：红色高亮横幅，明确告知原因与下一步动作 */
-.snap-fail {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 9px 11px;
-  border-radius: var(--r-sm);
-  background: var(--c-danger-bg, var(--c-warn-bg));
-  color: var(--c-danger, var(--c-warn));
-  border: 1px solid var(--c-danger-border, color-mix(in srgb, var(--c-danger, var(--c-warn)) 35%, transparent));
-  font-size: 12px;
-  line-height: 1.5;
-}
-.snap-fail :deep(svg),
-.snap-fail > svg {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-.snap-fail-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.snap-fail-body strong {
-  font-weight: 600;
-}
-.snap-fail-msg {
-  color: var(--c-text-2);
-  overflow-wrap: anywhere;
-}
-/* 重新抓取进行中的小转圈 */
-.spinner-sm {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border: 2px solid currentColor;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: cv-spin 0.7s linear infinite;
-}
-@keyframes cv-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.snap-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.snap-actions .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.reclass {
-  padding-top: 16px;
-  border-top: 1px solid var(--c-border);
-}
-.reclass-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.reclass-fields .btn {
-  align-self: flex-start;
-}
-.detail-actions {
-  padding-top: 4px;
-}
-
-.detail-empty {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 6px;
-  padding: 28px;
-  color: var(--c-faint);
-}
-.detail-empty-title {
-  margin: 4px 0 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--c-text-2);
-}
-.detail-empty .muted {
-  max-width: 240px;
-  line-height: 1.6;
-}
-
 /* ---------- 响应式 ----------
    断点划分：≥1600 宽屏（大尺寸 PC / Mac 外接屏）
              1240 / 1024 桌面与笔记本（侧栏 + 列表 + 详情三栏同屏）
              ≤860  平板竖屏 / 小窗口（侧栏与详情转为抽屉覆盖层）
              ≤560  手机（压缩顶栏，隐藏非关键元素）
-             触摸设备统一放大点按目标，保证触控与鼠标均无异常 */
+             触摸设备统一放大点按目标，保证触控与鼠标均无异常
+   注：详情面板（.detail）的断点规则已随 UI-M7 拆入 DetailPanel.vue */
 .side-mask {
   display: none;
 }
 
-/* 宽屏：详情面板给足空间，避免长文本被压窄 */
-@media (min-width: 1600px) {
-  .detail {
-    width: 420px;
-  }
-}
-
-@media (max-width: 1240px) {
-  .detail {
-    width: 330px;
-  }
-}
-
-/* 笔记本 / 平板横屏：收紧侧栏与详情，"重新分类"表单改为单列避免挤在一起 */
+/* 笔记本 / 平板横屏：收紧侧栏 */
 @media (max-width: 1024px) {
   .sidebar {
     width: 224px;
   }
-  .detail {
-    width: 300px;
-  }
   .brand-name {
     display: none;
   }
-  .reclass-row {
-    grid-template-columns: 1fr;
-  }
 }
 
-/* 平板竖屏 / 小窗口：侧栏与详情改为抽屉覆盖层，不再与列表争宽度 */
+/* 平板竖屏 / 小窗口：侧栏改为抽屉覆盖层，不再与列表争宽度 */
 @media (max-width: 860px) {
   .hamburger {
     display: inline-flex;
@@ -1370,24 +958,6 @@ watch(selectedMessage, (v) => {
     inset: var(--topbar-h) 0 0 0;
     background: rgba(16, 24, 40, 0.35);
     z-index: 55;
-  }
-  .detail {
-    position: fixed;
-    inset: var(--topbar-h) 0 0 0;
-    width: auto;
-    z-index: 70;
-    transform: translateX(100%);
-    transition: transform var(--t);
-    box-shadow: var(--shadow-lg);
-  }
-  .detail.open {
-    transform: translateX(0);
-  }
-  .detail-close {
-    display: inline-flex;
-  }
-  .detail:not(.open) {
-    pointer-events: none;
   }
   .search {
     max-width: none;
@@ -1425,9 +995,6 @@ watch(selectedMessage, (v) => {
   /* 只留图标，隐藏按钮文字，给搜索框让出空间 */
   .btn-label {
     display: none;
-  }
-  .detail {
-    padding: 14px;
   }
 }
 

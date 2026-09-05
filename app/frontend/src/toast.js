@@ -7,9 +7,9 @@ export const toasts = ref([]);
 
 let seq = 0;
 
-function push(type, message, ttl) {
+function push(type, message, ttl, extra = {}) {
   const id = ++seq;
-  toasts.value = [...toasts.value, { id, type, message }];
+  toasts.value = [...toasts.value, { id, type, message, ...extra }];
   const timer = setTimeout(() => dismiss(id), ttl);
   // 用户手动关闭时清掉定时器，避免对已移除的项做无谓操作
   return { id, timer };
@@ -25,4 +25,18 @@ export function toast(message, type = 'info', ttl = 3600) {
 
 toast.success = (m, ttl) => push('success', m, ttl ?? 2800);
 toast.error = (m, ttl) => push('error', m, ttl ?? 6000);
+toast.warning = (m, ttl) => push('warning', m, ttl ?? 4500);
 toast.info = (m, ttl) => push('info', m, ttl ?? 3600);
+
+// 带动作按钮的提示（UI-M6 撤销删除用）：点击按钮执行 onAction 并关闭。
+toast.action = (m, actionLabel, onAction, ttl = 5000) =>
+  push('info', m, ttl, { actionLabel, onAction });
+
+// ToastHost 点击动作按钮时调用
+export function runAction(t) {
+  try {
+    t.onAction?.();
+  } finally {
+    dismiss(t.id);
+  }
+}

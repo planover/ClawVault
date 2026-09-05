@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import ExcelJS from 'exceljs';
 import { Storage } from '../src/storage.js';
+import { setFetchImpl, setResolver } from '../src/netguard.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fnclaw-store-'));
 const archiveRoot = path.join(tmp, 'archive');
@@ -186,16 +187,74 @@ test('saveMedia：内容相同（同通道）只存一份，返回已存在路�
   assert.equal(after, before + 1, '不应重复落盘');
 });
 
+// 出网替身：通过 netguard 的注入 seam 安装，而不是对全局 fetch 做 monkey patch。
+// 原因见 netguard.js 顶部注释——monkey patch 曾掩盖过真实的 API 签名错误。
+function stubNet(impl) {
+  setFetchImpl(
+    impl ||
+      (async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'image/jpeg' },
+        arrayBuffer: async () => Buffer.from('URLDATA'),
+      })),
+  );
+  setResolver(async () => [{ address: '93.184.216.34', family: 4 }]);
+}
+function restoreNet() {
+  setFetchImpl(null);
+  setResolver(null);
+}
+
 test('saveMedia：URL 下载（mock fetch）写入媒体', ser, async () => {
-  const origFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(Buffer.from('URLDATA'), { status: 200 });
+  stubNet();
   try {
     const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道I', peer: 'u10', text: '图', kind: 'image', category: '图片' });
     const rel = await storage.saveMedia({ channelName: '通道I', id: rec.id, media: { url: 'https://example.com/a.jpg', ext: 'jpg' } });
     assert.ok(rel && rel.endsWith('.jpg'), '应按扩展名落盘');
     assert.equal(fs.readFileSync(path.join(archiveRoot, rel), 'utf8'), 'URLDATA');
   } finally {
-    globalThis.fetch = origFetch;
+    restoreNet();
+  }
+});
+
+// SEC-02 回归：媒体 URL 此前是裸 fetch，既无 SSRF 校验也无体积限制，
+// 而下载内容会落盘并可经 /api/media/:id 读回——等于带响应回显的 SSRF。
+// 这里断言私网 / 云元数据 / 回环地址一律被拒，且**不会**发起任何出网请求。
+test('saveMedia：拒绝 SSRF 目标（SEC-02 回归，双向覆盖）', ser, async () => {
+  let called = 0;
+  stubNet(async () => {
+    called += 1;
+    throw new Error('不应发起出网请求');
+  });
+  try {
+    const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道SSRF', peer: 'u', text: '图', kind: 'image', category: '图片' });
+    for (const bad of [
+      'http://127.0.0.1/admin',
+      'http://169.254.169.254/latest/meta-data/',
+      'http://10.0.0.5/internal',
+      'http://192.168.1.1/',
+      'http://localhost/secret',
+    ]) {
+      const rel = await storage.saveMedia({ channelName: '通道SSRF', id: rec.id, media: { url: bad, ext: 'jpg' } });
+      assert.equal(rel, '', `应拒绝 ${bad}`);
+    }
+    assert.equal(called, 0, '被拒的目标不应发起任何出网请求');
+  } finally {
+    restoreNet();
+  }
+});
+
+// 正向覆盖（ENG-2）：安全断言不能只测「拒绝」，也要测「放行」。
+// 解析到公网 IP 的正常媒体应当照常下载落盘，否则容易出现「守卫过严把功能打死」。
+test('saveMedia：公网目标正常放行（双向覆盖）', ser, async () => {
+  stubNet();
+  try {
+    const rec = storage.saveMessage({ channelId: 'c1', channelName: '通道OK', peer: 'u', text: '图', kind: 'image', category: '图片' });
+    const rel = await storage.saveMedia({ channelName: '通道OK', id: rec.id, media: { url: 'https://cdn.example.com/x.jpg', ext: 'jpg' } });
+    assert.ok(rel && rel.endsWith('.jpg'), '公网目标应正常落盘');
+  } finally {
+    restoreNet();
   }
 });
 

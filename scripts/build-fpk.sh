@@ -80,6 +80,7 @@ rm -f app.tgz 2>/dev/null || true
     --exclude='*/test' --exclude='tests' \
     --exclude='data' --exclude='archive' --exclude='*.log' \
     --exclude='var' --exclude='*/var' \
+    --exclude='.env' --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' \
     backend ui runtime )
 echo "    ✓ app.tgz ($(stat -c%s app.tgz) bytes)"
 
@@ -113,6 +114,10 @@ if [ "${1:-}" = "--check" ]; then
   done
   # 原生应用不应再含 docker
   if [ -e "$SIM/docker" ]; then echo "    ✗ 不应包含 docker 目录（已改为原生）"; ok=0; fi
+  # SEC-14：.env 等本地密钥文件绝不进包
+  if find "$SIM" -name '.env' -o -name '.env.*' 2>/dev/null | grep -q .; then
+    echo "    ✗ 包内发现 .env 文件（密钥泄露风险）"; ok=0
+  fi
   # LICENSE 不应在外层根目录（避免触发 fnOS 自动英文协议步骤）
   if [ -e "$SIM/LICENSE" ]; then echo "    ✗ 外层不应有 LICENSE（会触发 fnOS 自动渲染英文协议步骤）"; ok=0; fi
   if [ ! -f "$SIM/app.tgz" ]; then echo "    ✗ 外层应含 app.tgz（fnpack 规范）"; ok=0; fi

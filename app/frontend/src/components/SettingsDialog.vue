@@ -3,10 +3,15 @@ import { ref, watch, onMounted } from 'vue';
 import { api } from '../api.js';
 import { toast } from '../toast.js';
 import { pickArchiveDir, inFnosHost, revealInFileManager } from '../fnos.js';
+import { useDialogA11y } from '../dialogA11y.js';
 import Icon from './Icon.vue';
 
 const props = defineProps({ show: Boolean, mode: String, themeStyle: String });
 const emit = defineEmits(['close', 'saved', 'set-mode', 'set-style']);
+
+// UI-M1：Esc 关闭 + 打开时焦点入窗 + 关闭时焦点还原
+const dialogRoot = ref(null);
+useDialogA11y(() => props.show, () => emit('close'), dialogRoot);
 
 // 外观：模式（跟随系统 / 浅色 / 深色）+ 风格，改动直接冒泡到 App 做持久化
 const modeOptions = [
@@ -65,6 +70,8 @@ async function load() {
   try {
     const s = await api.getSettings();
     s.ingest.whitelistText = (s.ingest.whitelist || []).join(', ');
+    // 兜底：旧缓存/异常响应可能没有 links 字段
+    if (!s.links || typeof s.links !== 'object') s.links = { cdpEndpoint: '' };
     keySaved.value = s.ai.apiKey === MASK;
     keyInput.value = '';
     // 掩码不能直接放进可编辑输入框，否则用户一保存就把 '******' 写回去
@@ -133,10 +140,46 @@ async function testAI() {
     testing.value = false;
   }
 }
+
+// FUN-4：一键导出整库备份（zip：archive.db 一致性快照 + 设置/渠道 + 主密钥）。
+// 接口仅管理员可用；非管理员会拿到 403 并在 toast 中提示。
+const exporting = ref(false);
+async function exportBackup() {
+  if (exporting.value) return;
+  exporting.value = true;
+  try {
+    const res = await fetch(apiUrl('/api/backup/export'));
+    if (!res.ok) {
+      let msg = `导出失败 (HTTP ${res.status})`;
+      try {
+        const b = await res.json();
+        if (b && b.error) msg = String(b.error);
+      } catch {
+        /* 非 JSON 响应沿用默认文案 */
+      }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const dispo = res.headers.get('content-disposition') || '';
+    const m = dispo.match(/filename="([^"]+)"/);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : 'clawvault-backup.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast.success('备份已导出，请妥善保管（内含主密钥）');
+  } catch (e) {
+    toast.error('导出失败：' + (e.message || e));
+  } finally {
+    exporting.value = false;
+  }
+}
 </script>
 
 <template>
-  <div v-if="show" class="modal-mask" @click.self="emit('close')">
+  <div v-if="show" ref="dialogRoot" class="modal-mask" role="dialog" aria-modal="true" @click.self="emit('close')">
     <div class="modal" v-if="settings">
       <h3>设置</h3>
       <p class="modal-sub">外观、归档位置、AI 分类与语音转写。</p>
@@ -297,6 +340,31 @@ async function testAI() {
       <p class="field-hint">
         语音消息在社交端没有转写文字时，用这个端点补转；需兼容 OpenAI <code>/v1/audio/transcriptions</code>。留空则只保存音频、不转写。
       </p>
+
+      <!-- 网页快照（FUN-3） -->
+      <div class="section-label section-title">网页快照</div>
+      <div class="field">
+        <label for="s-cdp">浏览器 CDP 端点（可选）</label>
+        <input id="s-cdp" class="input" v-model="settings.links.cdpEndpoint" placeholder="http://192.168.1.10:3000" />
+        <p class="field-hint">
+          截图需要浏览器。本机没有 Chromium 时，可复用已有的浏览器服务（如 docker 里的 browserless/chrome），
+          填它的 CDP 地址即可；留空 = 自动探测本机浏览器，探测不到则跳过截图（元数据卡片与网页归档不受影响）。
+        </p>
+      </div>
+
+      <!-- 备份（FUN-4） -->
+      <div class="section-label section-title">备份</div>
+      <div class="field">
+        <div class="row">
+          <button class="btn ghost sm" type="button" :disabled="exporting" @click="exportBackup">
+            <span v-if="exporting" class="spinner"></span>
+            {{ exporting ? '导出中…' : '导出整库备份' }}
+          </button>
+        </div>
+        <p class="field-hint">
+          打包下载归档数据库（一致性快照）、设置与渠道配置为一个 zip。<span class="warn-text">zip 内含主密钥，可解密全部渠道凭据，请妥善保管。</span>仅管理员可导出。
+        </p>
+      </div>
 
       <div class="modal-actions">
         <button class="btn ghost" @click="emit('close')">取消</button>

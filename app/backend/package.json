@@ -11,16 +11,18 @@
   },
   "dependencies": {
     "adm-zip": "^0.6.0",
-    "better-sqlite3": "11.10.0",
+    "better-sqlite3": "12.11.1",
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "jimp": "^1.6.1",
     "mammoth": "^1.12.2",
-    "playwright-core": "^1.62.1",
     "qrcode": "^1.5.4",
     "silk-wasm": "^3.2.0",
     "undici": "^6.21.1",
     "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.62.1"
   },
   "devDependencies": {
     "tar": "^7.5.22"

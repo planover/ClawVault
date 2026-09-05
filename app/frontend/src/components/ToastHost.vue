@@ -1,8 +1,8 @@
 <script setup>
 import Icon from './Icon.vue';
-import { toasts, dismiss } from '../toast.js';
+import { toasts, dismiss, runAction } from '../toast.js';
 
-const ICONS = { success: 'check', error: 'alert', info: 'info' };
+const ICONS = { success: 'check', error: 'alert', warning: 'alert', info: 'info' };
 </script>
 
 <template>
@@ -11,6 +11,7 @@ const ICONS = { success: 'check', error: 'alert', info: 'info' };
       <div v-for="t in toasts" :key="t.id" class="toast" :class="t.type">
         <Icon :name="ICONS[t.type] || 'info'" :size="16" />
         <span class="toast-msg">{{ t.message }}</span>
+        <button v-if="t.actionLabel" class="toast-action" @click="runAction(t)">{{ t.actionLabel }}</button>
         <button class="toast-close" aria-label="关闭提示" @click="dismiss(t.id)">
           <Icon name="close" :size="13" />
         </button>
@@ -61,6 +62,26 @@ const ICONS = { success: 'check', error: 'alert', info: 'info' };
 }
 .toast.info > :first-child {
   color: var(--c-primary);
+}
+.toast.warning {
+  border-left: 3px solid var(--c-warn);
+}
+.toast.warning > :first-child {
+  color: var(--c-warn);
+}
+.toast-action {
+  flex-shrink: 0;
+  align-self: center;
+  padding: 3px 10px;
+  border-radius: var(--r-full);
+  background: var(--c-primary-soft);
+  color: var(--c-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background var(--t-fast);
+}
+.toast-action:hover {
+  background: var(--c-primary-soft-2);
 }
 .toast-msg {
   flex: 1;
