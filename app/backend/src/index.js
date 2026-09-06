@@ -200,7 +200,12 @@ async function captureLinkSnapshots(record, text) {
   if (config.links?.enabled === false) return;
   const urls = extractUrls(text);
   if (!urls.length) return;
+  // 幂等：同一条消息下已抓过的 URL 跳过。
+  // 手动改分类现在也会触发快照（见 routes/messages.js），反复改到「收藏网址」
+  // 若不去重就会堆出一批重复快照行、重复外链请求。
+  const done = new Set(storage.getLinkSnapshots(record.id).map((s) => s.url));
   for (const url of urls) {
+    if (done.has(url)) continue;
     try {
       const snap = await createSnapshot(url, { archiveRoot: storage.archiveRoot });
       const saved = storage.saveLinkSnapshot({ ...snap, messageId: record.id });
@@ -425,7 +430,8 @@ app.use((req, res, next) => {
 });
 
 app.use('/api/channels', createChannelsRouter({ manager, storage }));
-app.use('/api/messages', createMessagesRouter({ storage, ws }));
+// 手动归入「收藏网址」时需补建快照，因此把抓取函数一并提供给路由（异步非阻塞）
+app.use('/api/messages', createMessagesRouter({ storage, ws, captureLinkSnapshots }));
 app.use('/api/folders', createFoldersRouter({ storage }));
 app.use('/api/settings', createSettingsRouter({ config, storage, saveSettings }));
 app.use('/api/chats', createChatsRouter({ storage }));

@@ -8,6 +8,7 @@ import path from 'node:path';
 import dns from 'node:dns';
 import { Storage } from '../src/storage.js';
 import createLinksRouter from '../src/routes/links.js';
+import createMessagesRouter from '../src/routes/messages.js';
 import { assertPublicUrl, isInternalHostname, isLiteralIp } from '../src/ssrf.js';
 // 出网替身走 netguard 的注入 seam（ENG-1：不再对 dns.lookup / 全局 fetch 做 monkey patch）
 import { setFetchImpl, setResolver } from '../src/netguard.js';
@@ -133,6 +134,80 @@ test('POST /api/links/:id/refetch：重新抓取并更新同一行 + 广播', as
   } finally {
     setFetchImpl(null);
     setResolver(null);
+    server.close();
+  }
+});
+
+test('listMessages：sub 为空（不指定子分类）时不得过滤掉带子分类的消息', () => {
+  const a = rstorage.saveMessage({
+    channelId: 'c1', channelName: '测试', peer: '张三', text: '无子分类', kind: 'text',
+  });
+  const b = rstorage.saveMessage({
+    channelId: 'c1', channelName: '测试', peer: '张三', text: '有子分类', kind: 'text',
+  });
+  rstorage.reclassify(a.id, '收藏网址', '');
+  rstorage.reclassify(b.id, '收藏网址', 'mp.weixin.qq.com');
+
+  // 只按分类查：两条都应回来（此前空 sub 被当成 `sub=''` 条件，漏掉 b）
+  const all = rstorage.listMessages({ category: '收藏网址' });
+  const ids = all.items.map((m) => m.id);
+  assert.ok(ids.includes(a.id), '不带子分类的应返回');
+  assert.ok(ids.includes(b.id), '带子分类的也应返回');
+  assert.equal(all.total, all.items.length);
+
+  // 指定子分类时仍要能精确筛出
+  const only = rstorage.listMessages({ category: '收藏网址', sub: 'mp.weixin.qq.com' });
+  assert.deepEqual(only.items.map((m) => m.id).includes(b.id), true);
+  assert.deepEqual(only.items.map((m) => m.id).includes(a.id), false);
+});
+
+test('POST /api/messages/:id/reclassify 到「收藏网址」会补建快照；其它分类不触发；重复归类幂等', async () => {
+  const calls = [];
+  const msg = rstorage.saveMessage({
+    channelId: 'c1',
+    channelName: '测试',
+    peer: '张三',
+    text: '见 https://example.com/a',
+    kind: 'text',
+  });
+  const app = express();
+  app.use(express.json());
+  app.use(
+    '/api/messages',
+    createMessagesRouter({
+      storage: rstorage,
+      ws: { broadcast() {} },
+      // 真机由 index.js 注入；这里用替身断言「调用与参数」，不真出网
+      captureLinkSnapshots: async (rec, text) => {
+        calls.push({ id: rec.id, text });
+      },
+    }),
+  );
+  const server = await startServer(app);
+  try {
+    const post = (id, category) =>
+      fetch(base(server) + `/api/messages/${id}/reclassify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ category }),
+      });
+
+    // 1) 归入收藏网址 → 触发快照
+    let res = await post(msg.id, '收藏网址');
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].id, msg.id);
+
+    // 2) 归入其它分类 → 不触发（避免每次改分类都打外网）
+    res = await post(msg.id, '文本');
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1, '非收藏网址分类不应触发快照');
+
+    // 3) 不存在的消息 → 404 且不触发
+    res = await post(999999, '收藏网址');
+    assert.equal(res.status, 404);
+    assert.equal(calls.length, 1);
+  } finally {
     server.close();
   }
 });

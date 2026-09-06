@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { LINK_CATEGORY } from '../linkshot.js';
 
 // 查询参数白名单化与数值收敛，避免把任意 query 直接喂给 SQL / 产生超大 limit
 function parseListQuery(query) {
@@ -19,7 +20,7 @@ function parseListQuery(query) {
   };
 }
 
-export default function createMessagesRouter({ storage, ws }) {
+export default function createMessagesRouter({ storage, ws, captureLinkSnapshots }) {
   const r = Router();
 
   r.get('/', (req, res) => {
@@ -40,6 +41,14 @@ export default function createMessagesRouter({ storage, ws }) {
     const updated = storage.reclassify(parseInt(req.params.id, 10), category, sub || '');
     if (!updated) return res.status(404).json({ error: 'not found' });
     ws.broadcast({ type: 'reclassify', record: updated });
+    // 手动归入「收藏网址」时补建快照：自动归档只对入库瞬间的正文做抓取，
+    // 用户后改到该分类时此前没有任何快照/链接卡片。这里与入库路径走同一函数，
+    // 异步非阻塞，且函数内部已按 URL 去重（重复改分类不会堆重复快照）。
+    if (category === LINK_CATEGORY && typeof captureLinkSnapshots === 'function') {
+      captureLinkSnapshots(updated, updated.text || '').catch((e) =>
+        console.error('[ClawVault] 手动归类后快照失败:', e?.message || e),
+      );
+    }
     res.json(updated);
   });
 

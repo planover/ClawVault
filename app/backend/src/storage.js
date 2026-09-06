@@ -798,7 +798,11 @@ export class Storage {
       where.push('category = @category');
       params.category = category;
     }
-    if (sub !== undefined && sub !== null) {
+    // 注意：sub 为空串时必须视为「不筛选」。
+    // 此前用 `sub !== undefined && sub !== null` 判断，空串也会拼上 `sub = ''`，
+    // 结果前端按分类浏览（不指定子分类）时，凡带子分类的消息都被静默漏掉
+    // ——真机实测：收藏网址 共 3 条，接口只返回 2 条（28 号有子分类被过滤）。
+    if (typeof sub === 'string' && sub !== '') {
       where.push('sub = @sub');
       params.sub = sub;
     }

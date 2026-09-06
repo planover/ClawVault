@@ -110,7 +110,16 @@ const KINDS = [
   { value: 'sticker,emoji', label: '表情', icon: 'smile' },
   { value: 'video', label: '视频', icon: 'video' },
   { value: 'file', label: '文件', icon: 'file' },
+  // 「收藏网址」是**分类**（category）而非消息类型（kind）——整条网址消息在后端
+  // 归类到该分类、kind 仍是 text。因此这一项走分类筛选，不能用 kind 参数。
+  { value: '__links__', label: '收藏网址', icon: 'link' },
 ];
+
+// 类型页签的高亮判定：网址项看 category，其余看 kind（且二者互斥）
+function isKindActive(k) {
+  if (k.value === '__links__') return filter.category === '收藏网址' && !filter.kind;
+  return filter.kind === k.value && filter.category !== '收藏网址';
+}
 
 // 当前筛选路径的可读标题，用作列表区标题（面包屑式）
 const filterTitle = computed(() => {
@@ -218,7 +227,17 @@ function clearSearch() {
 }
 
 function onSelectKind(k) {
-  filter.kind = k;
+  // 类型与分类互斥：点「收藏网址」= 按该分类筛选；点其它类型 = 清掉分类只看类型。
+  // 否则会变成「收藏网址 + 文本」的叠加条件，结果看起来像是筛选失灵。
+  if (k === '__links__') {
+    filter.category = '收藏网址';
+    filter.sub = '';
+    filter.kind = '';
+  } else {
+    filter.category = '';
+    filter.sub = '';
+    filter.kind = k;
+  }
   selectedId.value = null;
   selectedMessage.value = null;
   loadMessages(true);
@@ -251,6 +270,9 @@ function closeDetail() {
   showDetail.value = false;
 }
 function toggleSide() {
+  // 手机端进二级页（详情）后点☰没反应：详情覆盖层 z-index(70) 高于侧栏抽屉(60)，
+  // 抽屉被完整盖住，看上去就是「☰ 点了没用」。开抽屉前先收起详情。
+  if (!showSide.value) showDetail.value = false;
   showSide.value = !showSide.value;
 }
 
@@ -497,8 +519,8 @@ watch(selectedMessage, (v) => {
                 v-for="k in KINDS"
                 :key="k.value"
                 class="seg"
-                :class="{ active: filter.kind === k.value }"
-                :aria-pressed="filter.kind === k.value"
+                :class="{ active: isKindActive(k) }"
+                :aria-pressed="isKindActive(k)"
                 @click="onSelectKind(k.value)"
               >
                 <Icon v-if="k.icon" :name="k.icon" :size="14" />
@@ -595,7 +617,8 @@ watch(selectedMessage, (v) => {
   background: color-mix(in srgb, var(--c-surface) 82%, transparent);
   backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--c-border);
-  z-index: 30;
+  /* 手机端置于详情覆盖层(70)与侧栏抽屉(60)之上，保证☰/搜索/设置始终可点 */
+  z-index: 80;
 }
 .brand {
   display: flex;
