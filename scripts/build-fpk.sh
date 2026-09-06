@@ -71,19 +71,26 @@ chmod 755 "$REPO/cmd/main" 2>/dev/null || true
 find "$REPO/app/backend/node_modules/.bin" -type f -exec chmod 755 {} + 2>/dev/null || true
 echo "    ✓ 应用目录权限已收紧（代码目录 group/other 不可写，.bin=755）"
 
-# 4.6) OPS-P2：Windows 构建机容易把 cmd/*.sh 写成 CRLF，导致 fnOS Linux 执行时
-# 解释器路径变成 /bin/sh\r 而报「执行脚本出错且原因未知」。打包前强制校验。
-echo "==> 校验关键脚本换行符（防止 CRLF 导致 fnOS 生命周期脚本失败）"
-CRLF_OK=1
-for f in cmd/main cmd/install_init cmd/install_callback cmd/upgrade_init cmd/upgrade_callback cmd/uninstall_init cmd/uninstall_callback cmd/config_init cmd/config_callback wizard/install config/privilege config/resource manifest; do
+# 4.6) OPS-P2：Windows 构建机（Git for Windows 默认 core.autocrlf=true）会在 checkout 时
+# 把 LF 转回 CRLF，导致 fnOS Linux 执行生命周期脚本时 shebang 变成 /bin/sh\r，
+# 内核报「cannot execute: required file not found」→ 应用中心「执行脚本出错且原因未知」。
+# 这里【先归一化再校验】：无论工作树是 CRLF 还是 LF，打进包的一定是 LF（双保险，
+# 与 .gitattributes 的 eol=lf 互补——后者只管 checkout，本步管打包产物）。
+echo "==> 归一化关键脚本换行符为 LF（防止 CRLF 导致 fnOS 生命周期脚本失败）"
+for f in cmd/* wizard/* config/* manifest README.md CONTRIBUTING.md; do
   [ -f "$f" ] || continue
-  if head -1 "$f" | grep -q $'\r'; then
-    echo "    ✗ $f 包含 CRLF 换行符" >&2
+  sed -i 's/\r$//' "$f" 2>/dev/null || true
+done
+CRLF_OK=1
+for f in cmd/* wizard/* config/* manifest; do
+  [ -f "$f" ] || continue
+  if grep -q $'\r' "$f"; then
+    echo "    ✗ $f 归一化后仍含 CRLF 换行符" >&2
     CRLF_OK=0
   fi
 done
 if [ "$CRLF_OK" = "0" ]; then
-  echo "✗ 关键脚本存在 CRLF，打包已中止。请在 Git Bash 执行 sed -i 's/\\r$//' 后重试。" >&2
+  echo "✗ 关键脚本归一化后仍含 CRLF，打包已中止。" >&2
   exit 1
 fi
 echo "    ✓ 关键脚本均为 LF"

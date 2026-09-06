@@ -8,6 +8,7 @@
 #
 # 边界（务必保留 clawvault 可写的路径）：
 #   - $APP_DIR 顶层本身：app.sock 落在这里，Node 启动时要 unlink+重建；
+#     因此子目录只读化后，本钩子会显式把顶层 chown 回 clawvault:clawvault（见下方）。
 #   - 数据/日志在 @appshare（DATA_SHARE），不在本目录树下。
 # 注意：backend/node_modules 一并只读化后，cmd/main 的 better-sqlite3 自愈
 # （ensure_sqlite3 拷回纯净 .node）会写不动——此时它会明确报错而不是静默劣化，
@@ -25,7 +26,13 @@ if [ "$(id -u)" = "0" ] && [ -d "$APP_DIR" ]; then
   done
   # cmd 脚本必须保持可执行（fnOS 以包用户调用 cmd/main）
   chmod 755 "$APP_DIR/cmd/main" 2>/dev/null || true
-  echo "ClawVault: 程序目录已只读化（root 所有，clawvault 只读执行）"
+  # —— 升级失败根因修复（v1.0.42）——
+  # 顶层 $APP_DIR 必须保留给运行用户 clawvault：app.sock 落在这里，Node 启动时
+  # 要 unlink+重建。若 fnOS 以 root 解包新 fpk，顶层会被置为 root:root，导致 clawvault
+  # 无法创建 socket、后端启动失败、应用中心报『执行脚本出错』。故显式归还 clawvault。
+  chown clawvault:clawvault "$APP_DIR" 2>/dev/null || true
+  chmod 700 "$APP_DIR" 2>/dev/null || true
+  echo "ClawVault: 程序目录已只读化（子目录 root 所有，顶层 clawvault 所有以建 socket）"
 else
   # 非 root 调用（极少数环境）无法 chown，跳过不致命
   echo "ClawVault: install_callback 非 root 环境，跳过程序目录只读化" >&2

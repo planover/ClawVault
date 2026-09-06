@@ -15,7 +15,13 @@ if [ "$(id -u)" = "0" ] && [ -d "$APP_DIR" ]; then
     fi
   done
   chmod 755 "$APP_DIR/cmd/main" 2>/dev/null || true
-  echo "ClawVault: 升级后程序目录已重新只读化（root 所有，clawvault 只读执行）"
+  # —— 升级失败根因修复（v1.0.42）——
+  # 顶层 $APP_DIR 必须保留给运行用户 clawvault：app.sock 落在这里，Node 启动时
+  # 要 unlink+重建。若 fnOS 以 root 解包新 fpk，顶层会被置为 root:root，导致 clawvault
+  # 无法创建 socket、后端启动失败、应用中心报『执行脚本出错』。故显式归还 clawvault。
+  chown clawvault:clawvault "$APP_DIR" 2>/dev/null || true
+  chmod 700 "$APP_DIR" 2>/dev/null || true
+  echo "ClawVault: 升级后程序目录已重新只读化（子目录 root 所有，顶层 clawvault 所有以建 socket）"
 else
   echo "ClawVault: upgrade_callback 非 root 环境，跳过程序目录只读化" >&2
 fi

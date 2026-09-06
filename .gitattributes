@@ -1,13 +1,21 @@
-# 自动处理换行符；关键脚本/配置强制 LF，避免在 Windows 构建机被打包成 CRLF 导致飞牛启动失败
-* text=auto
-*.sh text eol=lf
-*.mjs text eol=lf
-*.js text eol=lf
-*.vue text eol=lf
-*.json text eol=lf
-*.md text eol=lf
-cmd/* text eol=lf
-config/* text eol=lf
-app/ui/config text eol=lf
-manifest text eol=lf
-wizard/install text eol=lf
+# 强制生命周期脚本与清单以 LF 换行（安全网，非升级失败根因）。
+# 历史排查曾怀疑 CRLF shebang（#!/bin/sh\r 在 Linux 找不到 /bin/sh\r）会导致
+# fnOS 应用中心「执行脚本出错」，但真机核验 fpk 内脚本本就是 LF，该假设被排除。
+# 真正根因是 install/upgrade 回调把程序目录顶层 chown 为 root:root，导致包用户
+# clawvault 无法创建 app.sock、后端启动失败（已在 cmd/install_callback 与
+# cmd/upgrade_callback 中修复：子目录只读化后显式把顶层归还 clawvault:clawvault）。
+# 这里仍强制 LF 作为防御性保险：Git for Windows 的 core.autocrlf 会在 checkout
+# 时把 LF 转回 CRLF，用 eol=lf 可让这些文件在任何平台都按 LF 检出；build-fpk.sh
+# 打包时也会再次归一化，双保险。
+*                text=auto
+*.sh             text eol=lf
+*.mjs            text eol=lf
+*.js             text eol=lf
+*.vue            text eol=lf
+*.json           text eol=lf
+*.md             text eol=lf
+cmd/*            text eol=lf
+wizard/*         text eol=lf
+config/*         text eol=lf
+app/ui/config    text eol=lf
+manifest         text eol=lf
