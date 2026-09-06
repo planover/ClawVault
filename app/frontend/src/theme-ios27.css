@@ -259,3 +259,45 @@
 [data-theme-style='ios27'] ::-webkit-scrollbar-thumb {
   background: var(--c-border-strong);
 }
+
+/* ---------- 可访问性回退 ----------
+   iOS 27 主题大量依赖 backdrop-filter + 半透明表面。若宿主 WebView（fnOS 内嵌）
+   或用户系统不支持 backdrop-filter，半透明表面会透出底层光斑，导致文字对比度
+   跌破 WCAG 1.4.3 AA。此处提供不透明回退配色。 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-theme-style='ios27'] {
+    --c-bg: #eef0f6;
+    --c-surface: #ffffff;
+    --c-surface-2: #f3f5fa;
+    --c-surface-3: #e6e9f0;
+  }
+  [data-theme-style='ios27'][data-theme='dark'] {
+    --c-bg: #0d0f14;
+    --c-surface: #14171d;
+    --c-surface-2: #191d24;
+    --c-surface-3: #21262f;
+  }
+}
+
+/* UI-A11y：玻璃主题下标签默认使用半透明底色，对比度不足。
+   覆盖为实色主色底 + 白字，确保 AA。 */
+[data-theme-style='ios27'] .tag {
+  background: var(--c-primary);
+  color: #fff;
+}
+[data-theme-style='ios27'] .tag.neutral {
+  background: var(--c-text-2);
+  color: #fff;
+}
+[data-theme-style='ios27'] .tag.ok {
+  background: var(--c-success);
+  color: #fff;
+}
+[data-theme-style='ios27'] .tag.warn {
+  background: var(--c-warn);
+  color: #fff;
+}
+[data-theme-style='ios27'] .tag.danger {
+  background: var(--c-danger);
+  color: #fff;
+}

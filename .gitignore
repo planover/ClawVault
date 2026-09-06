@@ -26,3 +26,5 @@ fnpack.exe
 .dl/
 app/runtime/
 tmp/
+# vite 构建时生成的临时配置文件（release 构建）
+*.timestamp-*.mjs

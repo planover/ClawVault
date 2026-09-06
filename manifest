@@ -1,5 +1,5 @@
 appname=clawvault
-version=1.0.41
+version=1.0.42
 display_name="ClawVault（爪匣）"
 desc="""<p><b>ClawVault（爪匣）</b> —— 把你在微信 / Telegram / 飞书 / 钉钉 / 企业微信 / Discord / Slack 等平台与 bot 的对话，自动分类归档到飞牛。</p>
 <p>核心特性：</p>
@@ -22,7 +22,8 @@ checkport=false
 desktop_uidir=
 desktop_applaunchname="clawvault.Application"
 disable_authorization_path=false
-changelog="""1.0.39：网址快照「抓取失败」体验补全 + 代理出网。①真机联网/配代理后可正常抓取：链接快照抓取现支持经由受信代理出网（LINKS_PROXY 或 HTTPS_PROXY/HTTP_PROXY 环境变量，undici ProxyAgent 作 fetch dispatcher，DNS 由代理侧解析），解决 fnOS 应用沙箱本地无出站 DNS 导致网页抓不到的问题；代理路径下 SSRF 防护收紧为「字面内网 IP + 内网/保留域名（localhost/.local/.internal/.lan/metadata 等）」双重拦截，云元数据 169.254.169.254 仍被挡。②UI 明确提示抓取失败：详情面板快照卡片在 status=fetch_failed 时显示红色高亮横幅（含失败原因与「联网后再点重新抓取」引导），不再静默无提示。③手动重新抓取：每条快照新增「重新抓取」按钮（POST /api/links/:id/refetch），用已存 url 重抓同一行并广播刷新，前端就地更新 + Toast 反馈；重新抓取仍失败会给出明确提示。后端测试 130 项全绿。
+changelog="""1.0.42：修复 fnOS 应用中心 1.0.40→1.0.41 升级失败（cmd/* 生命周期脚本被 Windows 构建机写成 CRLF，Linux 执行时报 /bin/sh\\r 找不到，现已在仓库转换为 LF 并在 build-fpk.sh 中增加 CRLF 校验门禁）；同时补齐 UI 设计规范审查发现的问题：修复 MessageList 卡片 role=button 内嵌删除按钮的 ARIA 违规与键盘冲突、触屏/窄屏下删除按钮不可见、汉堡按钮缺少 aria-expanded、详情面板缺少 aria-label、搜索框缺少 search 地标、侧栏导航 landmark 语义、iOS 27 主题强依赖 backdrop-filter 的对比度回退与标签对比度不足。
+1.0.39：网址快照「抓取失败」体验补全 + 代理出网。①真机联网/配代理后可正常抓取：链接快照抓取现支持经由受信代理出网（LINKS_PROXY 或 HTTPS_PROXY/HTTP_PROXY 环境变量，undici ProxyAgent 作 fetch dispatcher，DNS 由代理侧解析），解决 fnOS 应用沙箱本地无出站 DNS 导致网页抓不到的问题；代理路径下 SSRF 防护收紧为「字面内网 IP + 内网/保留域名（localhost/.local/.internal/.lan/metadata 等）」双重拦截，云元数据 169.254.169.254 仍被挡。②UI 明确提示抓取失败：详情面板快照卡片在 status=fetch_failed 时显示红色高亮横幅（含失败原因与「联网后再点重新抓取」引导），不再静默无提示。③手动重新抓取：每条快照新增「重新抓取」按钮（POST /api/links/:id/refetch），用已存 url 重抓同一行并广播刷新，前端就地更新 + Toast 反馈；重新抓取仍失败会给出明确提示。后端测试 130 项全绿。
 1.0.37：修复 v1.0.36 网关身份守卫误拦 /api/health（fnOS 存活探针直连 socket 无网关注入头，被守卫返回 401，致应用被判为不健康）。改用 req.baseUrl + req.path 还原完整路径后豁免列表生效；其余 v1.0.36 安全收口项保持不变。1.0.36：安全收口（全部开口项闭环）。①OPS-P0-02 纵深防御：生产态所有 /api 读请求（除 /api/health、/api/about、/api/inbound）须携网关注入身份头，直连 socket 无头返回 401；WebSocket 升级同策。②OPS-P1-02 程序目录固化只读（INNER backend/ui/runtime 改 root 属主、clawvault 仅 r-x，socket 仍建于 INNER 目录）。③OPS-P3-02 补 config/wizard 目录遍历位。④OPS-P2-01 .clvkey 写后显式 chmod 600 双重保险。⑤OPS-P2-04 部署清理旧版可能含 aes_key 的调试日志残留（新版代码已 redactSecrets + 600）。⑥Office 预览 CSP 加 frame-ancestors 'self'。⑦OPS-P2-03（api-scope 由 fnOS 按调用授权，应用层无法收窄）、OPS-P1-01（v1.0.34 已改 fallback 至 @appshare，新装不再生成旧 @appdata，实质闭环）、exceljs/uuid moderate（fixAvailable=None，xlsx 写路径不触发 uuid 漏洞）维持监控。1.0.35：依赖安全更新（npm audit 收口）。①tar 从生产依赖移入 devDependencies 并升 7.5.22（仅测试使用，npm ci --omit=dev 不进 fpk，关闭 CRITICAL 路径穿越告警）。②图片处理库 jimp 升 1.6.1（修复 moderate 告警，@jimp/core 与 file-type 随传递修复）；jimp 1.x 为 ESM 且移除 Jimp.AUTO / Jimp.MIME_* / getBufferAsync 旧 API，重写 /api/media/thumb 缩略图（命名导入 + scale(factor) 等比缩放 + getBuffer 字符串 MIME），保留原图回退。③exceljs/uuid（moderate，需上游修复、xlsx 写路径不触发 uuid 漏洞）维持监控。
 1.0.34：安全整改收口。WEB-P1-01 权限分级（ownerUserId 认领 + requireAdmin 守卫写操作）、WEB-P1-03 SSRF（DNS 解析拒私网/回环/链路本地）、OPS-P1 属主收紧（代码目录 chmod go-w）、SUP-P1-03/04（mammoth ^1.12.2 / adm-zip ^0.6.0）、SUP-P2-02（GitHub Actions 全量 pin commit SHA）、低危（限流 300/min、Office 预览 HTML 清洗 + CSP、/api/health 去版本号泄露、WAL checkpoint、main.log 轮转）、P0-01（socket 父目录收 0o700）。
 1.0.33：修复 v1.0.32 安装后「本地应用启动失败」——cmd/main 旧数据目录清理逻辑误在 log() 函数定义前被调用（配合 set -e 以退出码 127 退出，飞牛判启动失败）；已将清理逻辑移至 die() 定义之后，恢复正常启动。其余沿用 v1.0.32 功能修复与安全复审收口。

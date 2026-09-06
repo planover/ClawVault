@@ -421,7 +421,14 @@ watch(selectedMessage, (v) => {
 <template>
   <div class="app">
     <header class="topbar">
-      <button class="icon-btn hamburger" aria-label="打开目录" @click="toggleSide">
+      <button
+        id="hamburger"
+        class="icon-btn hamburger"
+        aria-label="目录"
+        :aria-expanded="showSide"
+        aria-controls="sidebar"
+        @click="toggleSide"
+      >
         <Icon name="menu" :size="19" />
       </button>
 
@@ -430,7 +437,7 @@ watch(selectedMessage, (v) => {
         <span class="brand-name">ClawVault</span>
       </div>
 
-      <div class="search">
+      <form class="search" role="search" @submit.prevent>
         <Icon class="search-ico" name="search" :size="15" />
         <input
           class="search-input"
@@ -440,10 +447,10 @@ watch(selectedMessage, (v) => {
           placeholder="搜索消息内容…"
           @input="onSearchInput"
         />
-        <button v-if="filter.q" class="search-clear" aria-label="清空搜索" @click="clearSearch">
+        <button v-if="filter.q" class="search-clear" type="button" aria-label="清空搜索" @click="clearSearch">
           <Icon name="close" :size="13" />
         </button>
-      </div>
+      </form>
 
       <div class="spacer"></div>
 
@@ -471,8 +478,8 @@ watch(selectedMessage, (v) => {
     <div class="body">
       <div v-if="showSide" class="side-mask" @click="showSide = false"></div>
 
-      <aside class="sidebar" :class="{ open: showSide }">
-        <div class="side-scroll">
+      <aside id="sidebar" class="sidebar" :class="{ open: showSide }" aria-label="目录与频道">
+        <nav class="side-scroll" aria-label="目录与频道">
           <section class="side-sec">
             <div class="section-label">浏览</div>
             <button
@@ -502,7 +509,7 @@ watch(selectedMessage, (v) => {
               </a>
             </div>
           </section>
-        </div>
+        </nav>
       </aside>
 
       <main class="main">

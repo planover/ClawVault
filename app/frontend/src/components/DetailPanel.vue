@@ -144,7 +144,7 @@ async function doReclassify() {
 </script>
 
 <template>
-  <section ref="root" class="detail" :class="{ open: show }">
+  <section ref="root" class="detail" :class="{ open: show }" aria-label="消息详情">
     <button class="icon-btn sm detail-close" aria-label="关闭详情" @click="emit('close')">
       <Icon name="close" :size="16" />
     </button>

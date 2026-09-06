@@ -146,13 +146,17 @@ watch(
       :key="m.id"
       class="card"
       :class="{ active: m.id === selectedId, confirming: confirmId === m.id, 'emoji-card': m.kind === 'emoji' }"
-      role="button"
-      tabindex="0"
-      :aria-pressed="m.id === selectedId"
-      :aria-label="`${m.category}${m.sub ? ' / ' + m.sub : ''} ${m.kind || '文本'}消息`"
-      @click="emit('select', m.id)"
-      @keydown="onKey($event, m.id)"
     >
+      <!-- UI-A11y：整卡选中区域单独做成一个覆盖按钮，避免 role=button 的 article 内嵌真实 button -->
+      <button
+        class="card-hit"
+        type="button"
+        :aria-pressed="m.id === selectedId"
+        :aria-label="`${m.category}${m.sub ? ' / ' + m.sub : ''} ${m.kind || '文本'}消息`"
+        @click="emit('select', m.id)"
+        @keydown="onKey($event, m.id)"
+      ></button>
+      <div class="card-body">
       <header class="card-head">
         <span class="tag">{{ m.category }}<template v-if="m.sub"> / {{ m.sub }}</template></span>
         <Icon v-if="KIND_ICON[m.kind]" class="kind-ico" :name="KIND_ICON[m.kind]" :size="14" />
@@ -228,6 +232,7 @@ watch(
         <button class="btn sm danger" @click="confirmDelete(m.id)">删除</button>
         <button class="btn sm ghost" @click="cancelDelete">取消</button>
       </div>
+      </div>
     </article>
 
     <div ref="sentinel" class="sentinel" aria-hidden="true"></div>
@@ -241,20 +246,37 @@ watch(
 }
 
 .card {
-  padding: 12px 14px;
+  position: relative;
   border-radius: var(--r-lg);
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   cursor: pointer;
   transition: border-color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
 }
+.card-body {
+  position: relative;
+  z-index: 1;
+  padding: 12px 14px;
+}
+.card-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.card-hit:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 1px;
+}
 .card:hover {
   border-color: var(--c-border-strong);
   box-shadow: var(--shadow-sm);
-}
-.card:focus-visible {
-  outline: 2px solid var(--c-primary);
-  outline-offset: 1px;
 }
 .card.active {
   border-color: var(--c-primary);
@@ -297,6 +319,15 @@ watch(
 .del-btn:hover {
   color: var(--c-danger);
   background: var(--c-danger-bg);
+}
+
+/* UI-A11y：触屏 / 窄屏无 hover，删除按钮必须始终可见且 ≥32px（WCAG 2.5.8） */
+@media (pointer: coarse), (max-width: 560px) {
+  .del-btn {
+    min-width: 32px;
+    min-height: 32px;
+    opacity: 1;
+  }
 }
 
 .text {

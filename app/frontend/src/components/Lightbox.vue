@@ -200,9 +200,9 @@ function onKey(e) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKey));
+onMounted(() => window.addEventListener('keydown', onKey, true));
 onUnmounted(() => {
-  window.removeEventListener('keydown', onKey);
+  window.removeEventListener('keydown', onKey, true);
   window.removeEventListener('pointermove', onPointerMove);
   window.removeEventListener('pointerup', onPointerUp);
 });
