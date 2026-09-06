@@ -18,6 +18,8 @@ data/
 # 构建产物（fpk 内层 app.tgz 与发布包目录）
 app.tgz
 dist-fpk/
+# 前端热修通道产物（nas_patch_public / nas_patch_1040b 等脚本的归档点）
+public-patch.tgz
 
 # 构建工具与缓存
 fnpack.exe
