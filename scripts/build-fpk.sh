@@ -23,7 +23,7 @@ if [ -z "$VER" ]; then echo "✗ 无法从 manifest 读取 version" >&2; exit 1;
 
 OUT_DIR="dist-fpk"
 mkdir -p "$OUT_DIR"
-FPK="$OUT_DIR/clawvault_${VER}_x86_64.fpk"
+export FPK="$OUT_DIR/clawvault_${VER}_x86_64.fpk"
 
 echo "==> 打包 ClawVault v$VER fpk（原生应用：内置 Node + 统一网关 /app/clawvault）"
 
@@ -33,10 +33,10 @@ echo "==> 打包 ClawVault v$VER fpk（原生应用：内置 Node + 统一网关
 # 默认值：CI 构建的 1.0.41 release 包 cmd/* 全 644，fnOS GUI 升级 fork/exec
 # uninstall_init 报 permission denied（2026-09-06 15:07/15:11 两次升级失败实录）。
 chmod 755 cmd/* wizard/install 2>/dev/null || true
-for f in cmd/* wizard/install; do
-  if [ ! -x "$f" ]; then echo "✗ $f 缺少执行位（打包中止，勿依赖宿主机默认值）" >&2; exit 1; fi
-done
-echo "    ✓ cmd/* 与 wizard/install 已确保 755"
+# 注：文件系统级 -x 检查在 Windows/NTFS 上不可靠（chmod 对 git 追踪为 644 的文件是
+# no-op，且 Git for Windows 的 core.filemode=false 不在 checkout 时落执行位），在此中止会
+# 误杀 Windows 本地构建。归档内执行位的【强制 + 校验】统一放在下方 6.5 段（跨平台可靠）。
+echo "    ✓ cmd/* 与 wizard/install 已尝试补 755（归档内最终模式位由 6.5 段保证）"
 
 # 2) 前端发布构建（base=/app/clawvault/）→ backend/public
 echo "==> 构建前端 (vite release, base=/app/clawvault/)"
@@ -122,12 +122,38 @@ tar -czf "$FPK" \
   README.md CONTRIBUTING.md
 echo "    ✓ fpk: $FPK ($(stat -c%s "$FPK") bytes)"
 
-# 6.5) 归档内执行位自检：直接读 tar 头的模式位。文件系统上的 -x 测试在
-# Windows/NTFS 构建机上语义不可靠（MSYS 按内容启发式判执行），只有归档头才是
-# fnOS 解包时真正看到的东西。cmd/* 与 wizard/install 任一缺 owner 执行位即中止。
+# 6.5) 归档内执行位【强制 + 校验】：跨平台可靠，不依赖文件系统 chmod 语义。
+# Windows/NTFS 上 chmod 对 git 追踪为 644 的文件是 no-op，tar 会原样记录 644，
+# 导致 fnOS fork/exec 失败。这里直接改写 tar 头里的模式位，确保 cmd/* 与 wizard/install
+# 在归档内恒为 0755，再随后校验。python3 在 Windows(Git Bash 托管) 与 CI(Ubuntu) 均可用。
+echo "==> 强制归档内生命周期脚本执行位为 0755（跨平台）"
+python3 - <<'PYEOF'
+import os, tarfile, io
+fpk = os.environ.get('FPK')
+if not fpk or not os.path.isfile(fpk):
+    raise SystemExit('FPK 未设置或不存在: %r' % fpk)
+tmp = fpk + '.tmp_modefix'
+forced = []
+with tarfile.open(fpk, 'r:gz') as t, tarfile.open(tmp, 'w:gz') as out:
+    for m in t.getmembers():
+        if (m.name.startswith('cmd/') or m.name == 'wizard/install') and m.isfile():
+            m.mode = 0o755
+            forced.append(m.name)
+        # 硬链接/符号链接/目录成员的 extractfile() 返回 None，无数据载荷，直接保留成员本身；
+        # 否则（常规文件）读出数据后按改过的模式位重写。
+        tf = t.extractfile(m)
+        if tf is not None:
+            data = tf.read()
+            out.addfile(m, io.BytesIO(data))
+        else:
+            out.addfile(m)
+os.replace(tmp, fpk)
+print('    forced 0755:', forced)
+PYEOF
+# 校验：直接读 tar 头模式位（fnOS 解包时真正看到的东西）。任一缺 owner 执行位即中止。
 BAD_EXEC="$(tar -tzvf "$FPK" | awk '$NF ~ /^cmd\// || $NF == "wizard/install" { if (substr($1, 1, 1) != "d" && substr($1, 4, 1) != "x") print "  ✗ " $NF " mode=" $1 }')"
 if [ -n "$BAD_EXEC" ]; then
-  echo "✗ 归档内生命周期脚本缺执行位（fnOS 将 fork/exec 失败）：" >&2
+  echo "✗ 归档内生命周期脚本仍缺执行位（fnOS 将 fork/exec 失败）：" >&2
   echo "$BAD_EXEC" >&2
   exit 1
 fi
