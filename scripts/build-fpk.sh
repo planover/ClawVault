@@ -27,9 +27,16 @@ FPK="$OUT_DIR/clawvault_${VER}_x86_64.fpk"
 
 echo "==> 打包 ClawVault v$VER fpk（原生应用：内置 Node + 统一网关 /app/clawvault）"
 
-# 1) cmd 脚本执行位（Windows 不保留 Unix 权限，强制补 755）
-chmod +x cmd/main cmd/*.sh 2>/dev/null || true
-echo "    ✓ cmd 脚本已确保 755"
+# 1) cmd 脚本执行位（Windows 不保留 Unix 权限，强制补 755）。
+# v1.0.43 修复：旧写法 `chmod +x cmd/main cmd/*.sh` 的 cmd/*.sh 通配符匹配不到任何
+# 文件（生命周期脚本没有 .sh 后缀），|| true 又吞掉报错——执行位完全取决于构建宿主机
+# 默认值：CI 构建的 1.0.41 release 包 cmd/* 全 644，fnOS GUI 升级 fork/exec
+# uninstall_init 报 permission denied（2026-09-06 15:07/15:11 两次升级失败实录）。
+chmod 755 cmd/* wizard/install 2>/dev/null || true
+for f in cmd/* wizard/install; do
+  if [ ! -x "$f" ]; then echo "✗ $f 缺少执行位（打包中止，勿依赖宿主机默认值）" >&2; exit 1; fi
+done
+echo "    ✓ cmd/* 与 wizard/install 已确保 755"
 
 # 2) 前端发布构建（base=/app/clawvault/）→ backend/public
 echo "==> 构建前端 (vite release, base=/app/clawvault/)"
@@ -115,6 +122,17 @@ tar -czf "$FPK" \
   README.md CONTRIBUTING.md
 echo "    ✓ fpk: $FPK ($(stat -c%s "$FPK") bytes)"
 
+# 6.5) 归档内执行位自检：直接读 tar 头的模式位。文件系统上的 -x 测试在
+# Windows/NTFS 构建机上语义不可靠（MSYS 按内容启发式判执行），只有归档头才是
+# fnOS 解包时真正看到的东西。cmd/* 与 wizard/install 任一缺 owner 执行位即中止。
+BAD_EXEC="$(tar -tzvf "$FPK" | awk '$NF ~ /^cmd\// || $NF == "wizard/install" { if (substr($1, 1, 1) != "d" && substr($1, 4, 1) != "x") print "  ✗ " $NF " mode=" $1 }')"
+if [ -n "$BAD_EXEC" ]; then
+  echo "✗ 归档内生命周期脚本缺执行位（fnOS 将 fork/exec 失败）：" >&2
+  echo "$BAD_EXEC" >&2
+  exit 1
+fi
+echo "    ✓ 归档内 cmd/* 与 wizard/install 模式位校验通过（owner 可执行）"
+
 # 7) 可选：模拟 fnOS 安装校验布局
 if [ "${1:-}" = "--check" ]; then
   SIM="$(pwd)/dist-fpk/_sim_check"
@@ -148,7 +166,7 @@ if [ "${1:-}" = "--check" ]; then
   # LICENSE 不应在外层根目录（避免触发 fnOS 自动英文协议步骤）
   if [ -e "$SIM/LICENSE" ]; then echo "    ✗ 外层不应有 LICENSE（会触发 fnOS 自动渲染英文协议步骤）"; ok=0; fi
   if [ ! -f "$SIM/app.tgz" ]; then echo "    ✗ 外层应含 app.tgz（fnpack 规范）"; ok=0; fi
-  for f in "$SIM/cmd/main"; do
+  for f in "$SIM"/cmd/* "$SIM/wizard/install"; do
     if [ ! -x "$f" ]; then echo "    ✗ 无执行位 $f"; ok=0; fi
   done
   if [ "$ok" = "1" ]; then

@@ -139,6 +139,9 @@ export class Storage {
 
   static safe(name) {
     return String(name || '未知')
+      // 起始点号守卫：'..' 不含斜杠，旧替换集拦不住，而 path.join(root, '..', x)
+      // 会跳出归档根（chats.js GET /:channel/xlsx 把 URL 参数原样传到这里）。
+      .replace(/^\.+/, '_')
       .replace(/[\\/:*?"<>|]/g, '_')
       .replace(/\s+/g, '_')
       .slice(0, 60);
